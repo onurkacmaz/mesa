@@ -6,6 +6,7 @@ import PaneDock from './PaneDock.jsx';
 import RevealMark from './RevealMark.jsx';
 import { getTerminalEntry } from './terminalRegistry.js';
 import { getPaneGeom } from './paneGeometry.js';
+import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
 import { SELECTION_COLOR, ropeColor } from './theme.js';
 
 const CASCADE_STEP = 32;
@@ -142,7 +143,7 @@ function Kbd({ children }) {
 // One workflow: its own canvas, its own terminals, its own view. Every open
 // workflow stays mounted — a workflow you switched away from is usually the
 // one with something running in it — and only the active one is visible.
-export default function Workspace({ theme, active, onRequestClose, onPaneCountChange }) {
+export default function Workspace({ workflowId, theme, active, onRequestClose, onPaneCountChange }) {
   const [panes, setPanes] = useState([]);
   const [zoom, setZoom] = useState(1);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -910,6 +911,13 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
     });
   }, []);
 
+  // The title bar's "new terminal" and "new browser" live outside this
+  // component, so what they call has to be reachable from outside it.
+  useEffect(() => {
+    registerWorkspaceActions(workflowId, { addTerminal });
+    return () => unregisterWorkspaceActions(workflowId);
+  }, [workflowId, addTerminal]);
+
   const updatePane = useCallback((id, patch) => {
     setPanes((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }, []);
@@ -1335,8 +1343,6 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
         zoom={zoom}
         onReveal={revealPane}
         onClose={closePane}
-        onNewTerminal={() => addTerminal('terminal')}
-        onNewBrowser={() => addTerminal('browser')}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}

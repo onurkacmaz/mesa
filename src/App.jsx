@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Workspace from './Workspace.jsx';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
 import { CloseIcon, PlusIcon } from './icons.jsx';
+import { getWorkspaceActions } from './workspaceActions.js';
 
 // Bare bespoke mark: a prompt chevron + cursor, drawn as paths (no tile
 // behind it). The chevron carries a tight two-stop amber gradient — the
@@ -241,6 +242,32 @@ export default function App() {
 
         <div className="titlebar-spacer" />
 
+        {/* Opening a pane belongs up here with the other thing that makes
+            something new. It is aimed at whichever workflow is active, which
+            the strip already knows — the workspace itself publishes what it
+            can do rather than App holding it as state and re-rendering every
+            open terminal to keep it. */}
+        <div className="titlebar-actions">
+          <button
+            type="button"
+            className="titlebar-action"
+            onClick={() => getWorkspaceActions(activeId)?.addTerminal('terminal')}
+            title="Yeni terminal (⌘N)"
+          >
+            <PlusIcon />
+            <span>Terminal</span>
+          </button>
+          <button
+            type="button"
+            className="titlebar-action"
+            onClick={() => getWorkspaceActions(activeId)?.addTerminal('browser')}
+            title="Yeni browser (⌘B)"
+          >
+            <PlusIcon />
+            <span>Browser</span>
+          </button>
+        </div>
+
         <div className="theme-switch" role="group" aria-label="Tema">
           {THEME_MODES.map((mode) => (
             <button
@@ -262,6 +289,7 @@ export default function App() {
         {workflows.map((wf) => (
           <Workspace
             key={wf.id}
+            workflowId={wf.id}
             theme={theme}
             active={wf.id === activeId}
             onRequestClose={() => requestCloseWorkflow(wf.id)}

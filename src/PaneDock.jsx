@@ -21,8 +21,6 @@ export default function PaneDock({
   selectionCount,
   onReveal,
   onClose,
-  onNewTerminal,
-  onNewBrowser,
   onZoomIn,
   onZoomOut,
   onZoomReset
@@ -107,19 +105,6 @@ export default function PaneDock({
 
   return (
     <footer className="pane-dock">
-      {/* Opening a window sits next to the list of windows already open, which
-          is the only place it was ever really about. */}
-      <div className="dock-actions">
-        <button type="button" className="dock-action" onClick={onNewTerminal} title="Yeni terminal (⌘N)">
-          <PlusIcon />
-          <span>Terminal</span>
-        </button>
-        <button type="button" className="dock-action" onClick={onNewBrowser} title="Yeni browser (⌘B)">
-          <PlusIcon />
-          <span>Browser</span>
-        </button>
-      </div>
-
       {panes.length === 0 ? (
         <span className="pane-dock-empty">açık pencere yok</span>
       ) : (
