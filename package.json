@@ -1,0 +1,65 @@
+{
+  "name": "terminal-workflow-poc",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Multi-terminal, draggable workflow canvas desktop app POC",
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite\" \"wait-on tcp:5173 && ELECTRON_START_URL=http://localhost:5173 electron .\"",
+    "build": "vite build",
+    "start": "electron .",
+    "dist": "vite build && electron-builder --mac dmg",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+  },
+  "build": {
+    "appId": "com.onurkacmaz.terminalworkflow",
+    "productName": "Terminal Workflow",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "afterPack": "./build/afterPack.js",
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*",
+      "electron/shell-hooks/**/*"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "darkModeSupport": true,
+      "identity": null
+    },
+    "dmg": {
+      "title": "Terminal Workflow"
+    }
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-rnd": "^10.4.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "electron": "^32.0.0",
+    "electron-builder": "^26.15.3",
+    "vite": "^5.4.0",
+    "wait-on": "^7.2.0"
+  }
+}

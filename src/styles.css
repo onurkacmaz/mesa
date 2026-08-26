@@ -1,0 +1,1545 @@
+/* Design language: square. Nothing in this interface is rounded — no corner
+   radii, no round line caps, no circular marks. Sharpness is the system, so a
+   stray rounded corner reads as a mistake rather than a softening.
+   ── Tokens ───────────────────────────────────────────────────────────────
+   One warm-neutral system, two surfaces. The light theme is not an inversion:
+   it is paper under lamplight, with the same amber running through it, so the
+   workspace reads as the same product in either setting. */
+:root {
+  --accent: #d9a05c;
+  --danger: #d2705c;
+  --danger-text: #e9a08e;
+
+  --bg-app: #0a0908;
+  --bg-toolbar: #0c0b0a;
+  --bg-canvas: #070605;
+  --dot: rgba(232, 222, 208, 0.03);
+  --grain-blend: overlay;
+  --grain-opacity: 0.035;
+
+  --pane-frame: #151311;
+  --pane-screen: #0b0a09;
+  --pane-border: rgba(255, 255, 255, 0.09);
+  --pane-lip: rgba(255, 255, 255, 0.06);
+  --titlebar-top: #171512;
+  --titlebar-bottom: #131110;
+  --titlebar-edge: rgba(0, 0, 0, 0.55);
+  --screen-recess: rgba(0, 0, 0, 0.7);
+  --screen-recess-soft: rgba(0, 0, 0, 0.35);
+
+  --text-strong: #ece7e0;
+  --text: #ddd8d1;
+  --text-mid: #b6b0a8;
+  --text-dim: #8a847b;
+  --text-faint: #6b665f;
+  --text-ghost: #57524b;
+
+  --hover: rgba(255, 255, 255, 0.08);
+  --hover-soft: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-soft: rgba(255, 255, 255, 0.07);
+  --kbd-bg: rgba(0, 0, 0, 0.35);
+
+  /* Ropes rest in a quiet neutral, not in the accent. theme.js gave up
+     per-terminal tints on the grounds that coloured edges "read as status
+     rather than as chrome" — an amber line on every connection would walk
+     straight back into that. The accent is reserved for the one rope you are
+     touching. */
+  --conn: rgba(232, 222, 208, 0.3);
+  --port: rgba(232, 222, 208, 0.34);
+
+  --shadow-pane: 0 3px 8px rgba(0, 0, 0, 0.55);
+  --shadow-rail: 0 6px 18px rgba(0, 0, 0, 0.6);
+  --scroll-thumb: rgba(222, 214, 203, 0.16);
+  --scroll-thumb-hover: rgba(222, 214, 203, 0.3);
+}
+
+/* Light is built on white: the terminal surface is pure #fff — the sheet you
+   actually read — and everything around it is near-white chrome. The greys are
+   warmed a hair rather than the cool UI-kit neutral, so the panes read as
+   paper under the same amber light the dark theme uses, not as a wireframe. */
+:root[data-theme='light'] {
+  --accent: #9a6a1f;
+  --danger: #a2402c;
+  --danger-text: #8f3722;
+
+  --bg-app: #e9e7e4;
+  --bg-toolbar: #f7f6f4;
+  --bg-canvas: #e4e2de;
+  --dot: rgba(38, 34, 30, 0.11);
+  --grain-blend: multiply;
+  --grain-opacity: 0.025;
+
+  --pane-frame: #fbfaf9;
+  --pane-screen: #ffffff;
+  --pane-border: rgba(30, 27, 24, 0.15);
+  --pane-lip: rgba(255, 255, 255, 0.9);
+  --titlebar-top: #fdfcfb;
+  --titlebar-bottom: #f4f2f0;
+  --titlebar-edge: rgba(30, 27, 24, 0.12);
+  --screen-recess: rgba(30, 27, 24, 0.10);
+  --screen-recess-soft: rgba(30, 27, 24, 0.04);
+
+  --text-strong: #1a1815;
+  --text-mid: #45403a;
+  --text: #2e2a26;
+  --text-dim: #67615a;
+  --text-faint: #877f76;
+  --text-ghost: #a09890;
+
+  --hover: rgba(30, 27, 24, 0.07);
+  --hover-soft: rgba(30, 27, 24, 0.04);
+  --border: rgba(30, 27, 24, 0.15);
+  --border-soft: rgba(30, 27, 24, 0.10);
+  --kbd-bg: #ffffff;
+
+  --conn: rgba(30, 27, 24, 0.34);
+  --port: rgba(30, 27, 24, 0.36);
+
+  --shadow-pane: 0 2px 6px rgba(30, 27, 24, 0.13);
+  --shadow-rail: 0 8px 20px rgba(30, 27, 24, 0.16);
+  --scroll-thumb: rgba(30, 27, 24, 0.18);
+  --scroll-thumb-hover: rgba(30, 27, 24, 0.32);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background: var(--bg-app);
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-app);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 44px;
+  flex: 0 0 auto;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.kbd {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--kbd-bg);
+  border: 1px solid var(--border-soft);
+  padding: 1px 5px;
+  line-height: 1.5;
+}
+
+.new-terminal-btn {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--hover-soft);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 5px 6px 5px 11px;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+  white-space: nowrap;
+}
+
+.new-terminal-btn:hover {
+  background: var(--hover);
+}
+
+.zoom-controls {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--hover-soft);
+  border: 1px solid var(--border-soft);
+  padding: 3px;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+/* Clicking a control should not leave the OS focus ring parked on it — that
+   ring follows the system accent colour and has nothing to do with this
+   palette. Keyboard focus still gets a visible ring, drawn in our own tone. */
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.zoom-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.zoom-btn:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.zoom-value {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-mid);
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  min-width: 42px;
+  padding: 0 4px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.zoom-value:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+/* Theme control: three words, not a sun and a moon on a sliding pill. The
+   current one is simply the one that is lit. */
+.theme-switch {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--hover-soft);
+  border: 1px solid var(--border-soft);
+  padding: 3px;
+}
+
+.theme-option {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 3px 8px;
+  height: 22px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.theme-option:hover {
+  color: var(--text-mid);
+}
+
+.theme-option[aria-pressed='true'] {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.toolbar-selection {
+  font-size: 11.5px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.toolbar-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.canvas {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background-color: var(--bg-canvas);
+  cursor: grab;
+}
+
+.canvas.panning {
+  cursor: grabbing;
+}
+
+/* The surface — fill, dot field, grain — is painted here, on the viewport,
+   rather than on the canvas box. Painted on the box it stopped at the box's
+   edge, and hiding that seam is the only reason zooming out ever had a floor.
+   Here the field simply repeats: commitView writes the pitch, the dot radius
+   and the origin, so it tracks pan and zoom with nowhere to run out. */
+.canvas-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* The grain below blends, and it used to be isolated for free: it hung off
+     .canvas-content, whose transform makes a stacking context. This layer has
+     no transform, so the isolation has to be asked for — without it the grain
+     blends against whatever else has accumulated underneath. */
+  isolation: isolate;
+  background-color: var(--bg-canvas);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Grain sits between the surface and the panes: an ::after paints above its
+   own element's background, and .canvas-content is a later sibling, so it
+   never washes out readable content. */
+.canvas-grid::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Nothing but a transform origin for the panes now: any fill of its own would
+   draw a rectangle of missing dots the moment its edge came into view. */
+.canvas-content {
+  position: relative;
+  transform-origin: 0 0;
+}
+
+.marquee-box {
+  position: absolute;
+  border: 1px solid;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Connections ─────────────────────────────────────────────────────────
+   A rope between two panes. The layer sits inside .canvas-content, so it
+   takes the canvas pan and zoom for free and never computes either. */
+
+/* The surface itself is inert, and that is load-bearing rather than tidy:
+   .canvas's mousedown handler only acts when the event target IS the canvas
+   or its content layer, so a full-bleed SVG that accepted the pointer would
+   quietly take marquee selection and space-drag panning away. Only the
+   transparent hit strokes below opt back in. */
+.conn-layer {
+  position: absolute;
+  /* Panes are handed z from a counter that starts at 2, so 1 keeps every rope
+     behind every pane no matter how the stack is reshuffled by clicking. */
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* The second surface, above the panes. The rope you are pulling, the mark
+   showing exactly where it will tie, and the handles on the selected rope all
+   live here — every one of them is something you aim at, and a pane must never
+   be able to hide the thing you are aiming at. Still inert as a surface; only
+   the handles take the pointer. */
+.conn-layer-top {
+  z-index: 9000;
+}
+
+/* Where the rope will tie if you let go now. */
+.conn-snap {
+  fill: var(--accent);
+  stroke: none;
+  pointer-events: none;
+}
+
+/* The two ends of the selected rope, draggable to anywhere on any pane's
+   frame. Filled in the rope's own colour so it is obvious which rope they
+   belong to, outlined in the canvas tone so they stay legible sitting on top
+   of a pane's border. */
+.conn-endpoint {
+  fill: var(--rope, var(--accent));
+  stroke: var(--bg-canvas);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.conn-line {
+  fill: none;
+  /* Each rope carries its own hue, handed down from the <g> as --rope. The
+     neutral is a fallback that should never be reached. Resting opacity keeps
+     a canvas full of ropes from turning into a colour chart — the hue is there
+     to be traced, not to shout — and hovering strengthens THAT colour rather
+     than swapping in the accent, so a rope never changes identity when you
+     touch it. */
+  stroke: var(--rope, var(--conn));
+  opacity: 0.62;
+  stroke-width: 1.5;
+  /* Square caps, mitred joins — the rule at the top of this file. A round cap
+     here would be the one soft corner in the whole interface. */
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  /* The layer lives inside scale(zoom): a plain 1.5px stroke would render at
+     0.15px when zoomed out to 10% and 3.75px at 250%. */
+  vector-effect: non-scaling-stroke;
+  transition: opacity 120ms ease, stroke-width 120ms ease;
+}
+
+.conn-head {
+  fill: var(--rope, var(--conn));
+  stroke: none;
+  opacity: 0.62;
+  transition: opacity 120ms ease;
+}
+
+/* The grip. Transparent and much wider than the line, because a 1.5px target
+   is not a target. */
+.conn-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 13;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.conn:hover .conn-line,
+.conn-selected .conn-line,
+.conn:hover .conn-head,
+.conn-selected .conn-head {
+  opacity: 1;
+}
+
+.conn-selected .conn-line {
+  stroke-width: 2.2;
+}
+
+/* The rope mid-pull, already wearing the colour it will keep once it lands, so
+   nothing changes appearance on drop. Full strength because it is the thing
+   your hand is on. */
+.conn-draft {
+  opacity: 1;
+}
+
+/* ── Minimap ─────────────────────────────────────────────────────────────
+   Bottom-right, on the same recessed frame the panes use so it reads as part
+   of the instrument and not as a widget parked on top of it. */
+.minimap {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 500;
+  background: var(--pane-frame);
+  border: 1px solid var(--pane-border);
+  box-shadow: var(--shadow-pane);
+  /* Line height would otherwise leave a few stray pixels under the svg and
+     the panel would not sit flush around it. */
+  line-height: 0;
+  cursor: crosshair;
+}
+
+/* The same lip the panes catch light on, so the corner belongs to the rest of
+   the surface rather than floating over it. */
+.minimap::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--pane-lip);
+  pointer-events: none;
+}
+
+.minimap-surface {
+  display: block;
+  background: var(--bg-canvas);
+}
+
+.minimap-pane {
+  /* --text-ghost was the first instinct and it was too quiet: at 55% over the
+     near-black canvas the blocks landed around #322f2c and effectively
+     disappeared. A map you have to squint at is not a map. */
+  fill: var(--text-dim);
+  opacity: 0.65;
+}
+
+.minimap-pane-on {
+  fill: var(--accent);
+  opacity: 0.9;
+}
+
+.minimap-rope {
+  stroke-width: 1;
+  stroke-linecap: square;
+  opacity: 0.55;
+}
+
+/* Where you are. An outline rather than a tint, so it never obscures what it
+   frames — and no fill at all, because a translucent wash over the panes
+   would make two overlapping greys out of one legible one. */
+.minimap-view {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* ── Ports ───────────────────────────────────────────────────────────────
+   Square tabs flush against the inside of the pane's border. They are cut
+   into the frame rather than stuck onto it, which is the only form the square
+   design language leaves available — no dots, no circles, no handles. */
+.pane-port {
+  position: absolute;
+  z-index: 3;
+  background: var(--port);
+  cursor: crosshair;
+  opacity: 0;
+  /* A hidden element still takes the pointer. Without this, every pane would
+     carry four invisible traps on its edges that swallow clicks meant for the
+     terminal underneath — and show a crosshair over nothing. Interactivity is
+     granted with visibility, never before it. */
+  pointer-events: none;
+  transition: opacity 110ms ease, background-color 110ms ease;
+}
+
+/* A grip larger than the mark, extended only ALONG the edge and outward —
+   never inward. The 7px the tab occupies is already react-rnd's resize-handle
+   strip, so it costs the terminal nothing; a grip reaching further in would
+   start eating real clicks in the screen. (Outward is cropped by .pane's
+   overflow:hidden, which is harmless — it is transparent.) */
+.pane-port::before {
+  content: '';
+  position: absolute;
+}
+
+.pane-port-left::before {
+  inset: -8px 0 -8px -8px;
+}
+
+.pane-port-right::before {
+  inset: -8px -8px -8px 0;
+}
+
+.pane-port-top::before {
+  inset: -8px -8px 0 -8px;
+}
+
+.pane-port-bottom::before {
+  inset: 0 -8px -8px -8px;
+}
+
+.pane:hover .pane-port,
+.pane-focused .pane-port,
+.is-connecting .pane-port {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pane-port:hover {
+  background: var(--accent);
+}
+
+.pane-port-left,
+.pane-port-right {
+  width: 7px;
+  height: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.pane-port-left {
+  left: 0;
+}
+
+.pane-port-right {
+  right: 0;
+}
+
+.pane-port-top,
+.pane-port-bottom {
+  width: 28px;
+  height: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.pane-port-top {
+  top: 0;
+}
+
+.pane-port-bottom {
+  bottom: 0;
+}
+
+/* While a rope is being pulled the cursor must read as "connecting"
+   everywhere, including over the pane you are aiming at. */
+.is-connecting .canvas,
+.is-connecting .pane,
+.is-connecting .pane-titlebar {
+  cursor: crosshair;
+}
+
+/* The empty state teaches the canvas rather than announcing its emptiness:
+   the three things you cannot discover by looking, each paired with the key
+   that does it. Left-aligned inside a centred block, so it reads as a short
+   reference card and not a shrug. */
+.empty-hint {
+  position: absolute;
+  top: 44%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-ghost);
+  font-size: 12.5px;
+  text-align: left;
+  line-height: 1.6;
+  pointer-events: none;
+  max-width: 420px;
+}
+
+.empty-hint-lead {
+  margin: 0 0 18px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.empty-hint-keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 16px;
+  margin: 0;
+}
+
+.empty-hint-keys dt {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.empty-hint-keys dd {
+  margin: 0;
+  color: var(--text-ghost);
+  font-size: 11.5px;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  background: var(--pane-frame);
+  border: 1px solid var(--pane-border);
+  overflow: hidden;
+  /* Depth from one direction, cast tight and low — not a soft halo bloomed
+     evenly on every side. */
+  box-shadow: var(--shadow-pane);
+  transition: border-color 120ms ease;
+}
+
+/* The lip where light catches the top edge: a self-coloured highlight, so the
+   pane reads as a raised surface rather than an outlined box. */
+.pane::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--pane-lip);
+  pointer-events: none;
+}
+
+.pane-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  flex: 0 0 auto;
+  cursor: grab;
+  background: linear-gradient(to bottom, var(--titlebar-top), var(--titlebar-bottom));
+  border-bottom: 1px solid var(--titlebar-edge);
+  user-select: none;
+}
+
+.pane-titlebar:active {
+  cursor: grabbing;
+}
+
+/* A pane awaiting the close answer is marked, not hidden: its frame takes the
+   destructive tone and a thin wash cools the screen behind it, so you can
+   still read what is in there while deciding. */
+.pane-pending-close {
+  border-color: var(--danger) !important;
+}
+
+.pane-close-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.pane-title {
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  color: var(--text-mid);
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-focused .pane-title {
+  color: var(--text-strong);
+}
+
+/* Bir browser panesinde başlık satırını dolduracak bir cwd yok: sayfanın
+   adı boş alanın yanında kırpılmak yerine o alanı alır. */
+.pane-browser .pane-title {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+/* Where the session actually is. Set apart from the name by tone and by
+   being the one genuinely data-like string up here, so the two never read
+   as the same label wearing the same costume. */
+.pane-cwd {
+  font-family: 'SF Mono', Menlo, ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-focused .pane-cwd {
+  color: var(--text-dim);
+}
+
+.pane-status {
+  font-family: 'SF Mono', Menlo, ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-status-fail {
+  color: var(--danger);
+}
+
+.pane-status-dim {
+  color: var(--text-ghost);
+}
+
+.pane-icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.pane-focused .pane-icon {
+  opacity: 1;
+}
+
+.pane-title-input {
+  flex: 1 1 auto;
+  background: var(--pane-screen);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.pane-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.pane:hover .pane-close,
+.pane-focused .pane-close,
+.pane-selected .pane-close {
+  opacity: 1;
+}
+
+.pane-close:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+/* All open sessions share this box. The screen sits below the frame's
+   surface: an inner lip along the top does the work that a drawn border would
+   only fake. */
+.pane-screen {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--pane-screen);
+  box-shadow: inset 0 1px 0 var(--screen-recess), inset 0 2px 3px var(--screen-recess-soft);
+}
+
+.pane-body {
+  position: absolute;
+  inset: 0;
+  background: var(--pane-screen);
+  overscroll-behavior: contain;
+}
+
+/* Hidden with visibility, never display:none — an unrendered box has no size,
+   and a terminal that cannot measure itself while hidden comes back with the
+   wrong row count. This keeps every background session correctly fitted. */
+.pane-body-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The inner gutter deliberately lives on .xterm rather than on .pane-body.
+   FitAddon sizes the terminal from the parent's computed height — which under
+   border-box already includes the parent's own padding — and subtracts only
+   the padding declared on the .xterm element itself. Padding on .pane-body was
+   therefore counted as usable space, so the terminal claimed one row more than
+   actually fit and that row was cropped by the pane. */
+.pane-body .xterm {
+  height: 100%;
+  padding: 12px 14px 12px 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The scrollbar is a reading aid, not furniture: it stays out of the way and
+   only surfaces while the pointer is actually in the terminal. */
+.pane-body .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+.pane-body .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 140ms ease;
+}
+
+.pane-body:hover .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: var(--scroll-thumb);
+}
+
+.pane-body .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hover);
+}
+
+.pane-body .xterm-viewport {
+  overscroll-behavior: contain;
+}
+
+/* ── Close confirmation ───────────────────────────────────────────────────
+   A rail along the bottom of the workspace rather than a card in the middle
+   of a dimmed screen. The two answers are separated by presence, not by the
+   stock filled-versus-outlined pair: the destructive one carries a tinted
+   surface in its own colour, the safe one is bare text. */
+.confirm-rail {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 10px 10px 14px;
+  background: var(--titlebar-top);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-rail);
+  z-index: 10000;
+  white-space: nowrap;
+}
+
+.confirm-rail-count {
+  font-family: 'SF Mono', Menlo, ui-monospace, monospace;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--danger);
+  padding-right: 14px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.confirm-rail-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.confirm-rail-copy strong {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text-strong);
+}
+
+.confirm-rail-copy span {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.confirm-rail-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+}
+
+.confirm-cancel,
+.confirm-accept {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 9px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.confirm-cancel {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.confirm-cancel:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.confirm-accept {
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-text);
+}
+
+.confirm-accept:hover {
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
+}
+
+.confirm-accept .kbd {
+  color: var(--danger-text);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+
+/* ── Shell ────────────────────────────────────────────────────────────────
+   The title bar carries the workflows themselves. Tabs live in the window's
+   own drag region beside the traffic lights, the way a document app puts its
+   documents there — the workflow is the document here. */
+/* Everything in this row sits in one 30px band flush to the bottom edge —
+   the same band the tabs occupy — so the mark, the tabs and the theme control
+   share a single centre line instead of each finding its own. */
+.titlebar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 0 14px 0 84px;
+  height: 40px;
+  flex: 0 0 auto;
+  background: var(--bg-app);
+  -webkit-app-region: drag;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  height: 30px;
+  flex: 0 0 auto;
+  padding-right: 2px;
+}
+
+.titlebar-spacer {
+  flex: 1 1 auto;
+}
+
+.titlebar .theme-switch {
+  align-self: flex-end;
+}
+
+.workflow-tabs {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workflow-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* The active workflow is not a highlighted button: it is the one that joins
+   the surface below it, so the tab and its workspace read as one sheet. */
+.workflow-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 12px;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 220px;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.workflow-tab:hover {
+  color: var(--text-mid);
+  background: var(--hover-soft);
+}
+
+.workflow-tab-active {
+  background: var(--bg-toolbar);
+  color: var(--text-strong);
+}
+
+.workflow-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-tab-input {
+  background: var(--pane-screen);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+  font-size: 12px;
+  padding: 1px 5px;
+  width: 130px;
+  outline: none;
+}
+
+.workflow-tab-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.workflow-tab:hover .workflow-tab-close,
+.workflow-tab-active .workflow-tab-close {
+  opacity: 1;
+}
+
+.workflow-tab-close:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.workflow-add {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  width: 26px;
+  height: 30px;
+  flex: 0 0 auto;
+  margin-left: 4px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.workflow-add:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+/* Workspaces stack in the same box. Hidden with visibility rather than
+   display:none, for the same reason the terminals are: an unrendered box has
+   no size, and a terminal that cannot measure itself comes back with the
+   wrong row count. */
+.workspaces {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workspace {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* When the whole pane is the handle, the surface has to say so — otherwise
+   the only way to discover it is to try. The terminal's own text cursor would
+   promise selection this pane is not currently offering. */
+/* No traffic lights in fullscreen, so nothing to leave room for. */
+.titlebar-fullscreen {
+  padding-left: 14px;
+}
+
+/* ── Browser chrome: birebir Chromium ─────────────────────────────────────
+   Bu şerit uygulamanın kare dilinin dışındadır ve bilerek öyledir: istenen
+   şey Chrome'un kendisi — hap biçimli omnibox, dairesel hover hedefleri,
+   Material ikonlar, Chrome'un gri paleti, sekmedeki dönen yükleme işareti.
+   Tüm renkler kendi token setinde durur, böylece uygulamanın geri kalanına
+   tek bir değer sızmaz. */
+:root {
+  --cr-toolbar: #2f2f2f;
+  --cr-omnibox: #3d3d3d;
+  --cr-omnibox-hover: #474747;
+  --cr-omnibox-active: #232427;
+  --cr-omnibox-ring: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 1px 8px rgba(0, 0, 0, 0.45);
+  --cr-text: #e3e3e3;
+  --cr-dim: #9aa0a6;
+  --cr-icon: #c7c7c7;
+  --cr-icon-off: #6e6e6e;
+  --cr-hover: rgba(227, 227, 227, 0.1);
+  --cr-press: rgba(227, 227, 227, 0.16);
+  --cr-focus: #a8c7fa;
+  --cr-on-focus: #062e6f;
+  --cr-sep: rgba(255, 255, 255, 0.12);
+  --cr-menu: #35363a;
+  --cr-menu-hover: rgba(255, 255, 255, 0.08);
+  --cr-warn: #f28b82;
+  --cr-page: #202124;
+  --cr-shadow: 0 2px 6px rgba(0, 0, 0, 0.45), 0 10px 28px rgba(0, 0, 0, 0.38);
+}
+
+:root[data-theme='light'] {
+  --cr-toolbar: #ffffff;
+  --cr-omnibox: #eceef1;
+  --cr-omnibox-hover: #e3e6ea;
+  --cr-omnibox-active: #ffffff;
+  --cr-omnibox-ring: 0 1px 6px rgba(32, 33, 36, 0.28);
+  --cr-text: #1f1f1f;
+  --cr-dim: #5f6368;
+  --cr-icon: #444746;
+  --cr-icon-off: #bdc1c6;
+  --cr-hover: rgba(31, 31, 31, 0.08);
+  --cr-press: rgba(31, 31, 31, 0.13);
+  --cr-focus: #0b57d0;
+  --cr-on-focus: #ffffff;
+  --cr-sep: rgba(0, 0, 0, 0.12);
+  --cr-menu: #ffffff;
+  --cr-menu-hover: rgba(31, 31, 31, 0.06);
+  --cr-warn: #c5221f;
+  --cr-page: #ffffff;
+  --cr-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 10px 28px rgba(0, 0, 0, 0.12);
+}
+
+.cr-toolbar {
+  position: relative;
+  /* Menü sayfanın üstüne düşüyor: şerit kendi yığın bağlamını alıyor. */
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px;
+  flex: 0 0 auto;
+  background: var(--cr-toolbar);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: none;
+}
+
+.cr-btn {
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--cr-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.cr-btn:hover:not(:disabled) {
+  background: var(--cr-hover);
+}
+
+.cr-btn:active:not(:disabled),
+.cr-btn-open {
+  background: var(--cr-press);
+}
+
+.cr-btn:disabled {
+  color: var(--cr-icon-off);
+  cursor: default;
+}
+
+.cr-btn:focus-visible {
+  outline: 2px solid var(--cr-focus);
+  outline-offset: 0;
+}
+
+/* Omnibox. Dinlenirken bir düğme, yazarken bir input: bir input'un metninin
+   parçalarını boyayamazsınız ve Chrome'un host'u koyu, yolu soluk gösteren
+   davranışı tam olarak bunu gerektiriyor. */
+.cr-omnibox {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  margin: 0 6px;
+  padding: 0 14px 0 12px;
+  border: none;
+  border-radius: 16px;
+  background: var(--cr-omnibox);
+  color: var(--cr-text);
+  font-family: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: text;
+  overflow: hidden;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.cr-omnibox:hover {
+  background: var(--cr-omnibox-hover);
+}
+
+.cr-omnibox:focus-visible {
+  outline: 2px solid var(--cr-focus);
+  outline-offset: 1px;
+}
+
+.cr-omnibox-active,
+.cr-omnibox-active:hover {
+  background: var(--cr-omnibox-active);
+  box-shadow: var(--cr-omnibox-ring);
+  cursor: default;
+}
+
+.cr-omnibox-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  padding: 0;
+  background: transparent;
+  color: var(--cr-text);
+  font-family: inherit;
+  font-size: 13.5px;
+}
+
+.cr-omnibox-icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--cr-dim);
+}
+
+.cr-omnibox-icon-warn {
+  color: var(--cr-warn);
+}
+
+.cr-notsecure {
+  flex: 0 0 auto;
+  color: var(--cr-warn);
+  font-size: 12px;
+  padding-right: 9px;
+  margin-right: 1px;
+  border-right: 1px solid var(--cr-sep);
+}
+
+.cr-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cr-url-host {
+  color: var(--cr-text);
+}
+
+.cr-url-dim {
+  color: var(--cr-dim);
+}
+
+/* ⋮ menüsü. Chrome'un menüsü gibi görünüyor ve gerçekten çalışıyor: ölü bir
+   kontrol koymaktansa yaptığı iş gerçek olan bir menü. */
+.cr-menu-anchor {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.cr-menu {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  min-width: 244px;
+  padding: 6px 0;
+  background: var(--cr-menu);
+  border-radius: 8px;
+  box-shadow: var(--cr-shadow);
+  color: var(--cr-text);
+  font-size: 13px;
+  z-index: 20;
+}
+
+.cr-menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cr-menu-item:hover {
+  background: var(--cr-menu-hover);
+}
+
+.cr-menu-sep {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--cr-sep);
+}
+
+.cr-menu-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 12px 0 16px;
+}
+
+.cr-menu-zoom-label {
+  flex: 1 1 auto;
+}
+
+.cr-menu-zoom-value {
+  min-width: 46px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--cr-dim);
+}
+
+.cr-zoom-btn {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--cr-icon);
+  font-family: inherit;
+  font-size: 17px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.cr-zoom-btn:hover {
+  background: var(--cr-menu-hover);
+}
+
+.cr-zoom-reset {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--cr-focus);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 0 4px 0 8px;
+  cursor: pointer;
+}
+
+/* Chrome'un sekmesindeki throbber, pane başlığındaki favicon'un yerinde. */
+.cr-throbber {
+  color: var(--cr-focus);
+  animation: cr-spin 1000ms linear infinite;
+  transform-origin: 50% 50%;
+}
+
+@keyframes cr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cr-throbber {
+    animation: none;
+  }
+}
+
+/* Sayfa Chrome'da gömme bir yüzeyde durmaz: terminalin iç gölgesi burada
+   kapatılır, ayırıcı Chrome'un ince çizgisidir. */
+.browser-screen {
+  /* Ekran bir flex kabı, çünkü webview boyutunu normal akıştan almak
+     zorunda. Mutlak konumlanmış bir webview'da guest, elemanın son
+     ölçüsünü göremeden ekleniyor ve sayfa küçük bir viewport'a göre
+     kuruluyordu: altta ölü bant, ve YouTube gibi düzenini JS ile kuran
+     sitelerde bozuk bir üst çubuk. */
+  display: flex;
+  box-shadow: none;
+  border-top: 1px solid var(--cr-sep);
+  background: var(--cr-page);
+}
+
+/* Electron'un dokümanı bu konuda net: webview'ın varsayılan display:flex'i
+   ezilmemeli — içindeki iframe kabı tam olarak bununla dolduruyor. */
+.browser-webview {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  background: var(--cr-page);
+}
+
+/* Süren bir jest boyunca hiçbir sayfa fareyi görmez: guest'in üzerine giren
+   imleç aksi hâlde mousemove akışını kesiyor ve sürükleme ortada kalıyor.
+   İşaret gövdede, çünkü sürüklenen pane başkasının sayfasının üstünden de
+   geçebiliyor. */
+.is-pane-drag .browser-webview,
+.is-canvas-drag .browser-webview {
+  pointer-events: none;
+}
+
+.cr-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* Chrome'un net::ERR sayfasının kılığı. */
+.cr-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 40px;
+  background: var(--cr-page);
+  color: var(--cr-dim);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.cr-error > svg {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 14px;
+  color: var(--cr-icon-off);
+}
+
+.cr-error-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--cr-text);
+}
+
+.cr-error-detail {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--cr-dim);
+}
+
+.cr-error-retry {
+  appearance: none;
+  border: none;
+  border-radius: 100px;
+  background: var(--cr-focus);
+  color: var(--cr-on-focus);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 18px;
+  cursor: pointer;
+}
+
+.cr-error-retry:hover {
+  filter: brightness(1.08);
+}
+
+/* Favicon yüzeye çıplak oturur — arkasında kutu yok. */
+.pane-icon-page {
+  color: var(--text-faint);
+  opacity: 0.7;
+}
+
+.pane-focused .pane-icon-page {
+  color: var(--text-mid);
+}
+
+/* Dönen işaret sönük durmaz: yükleme sekmede okunması gereken bir durumdur. */
+.pane-icon-busy {
+  opacity: 1;
+}
+
+.pane-favicon {
+  display: block;
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
+}
