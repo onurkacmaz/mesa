@@ -1,5 +1,5 @@
 {
-  "name": "terminal-workflow-poc",
+  "name": "mesa",
   "version": "0.2.1",
   "private": true,
   "description": "Multi-terminal, draggable workflow canvas desktop app POC",
@@ -13,8 +13,8 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "build": {
-    "appId": "com.onurkacmaz.terminalworkflow",
-    "productName": "Terminal Workflow",
+    "appId": "com.onurkacmaz.mesa",
+    "productName": "Mesa",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -43,7 +43,7 @@
       "identity": null
     },
     "dmg": {
-      "title": "Terminal Workflow"
+      "title": "Mesa"
     }
   },
   "dependencies": {
