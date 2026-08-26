@@ -10,6 +10,7 @@
     "dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite\" \"wait-on tcp:5173 && ELECTRON_START_URL=http://localhost:5173 electron .\"",
     "build": "vite build",
     "start": "electron .",
+    "icon": "electron scripts/render-icon.js",
     "dist": "vite build && electron-builder --mac dmg",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },

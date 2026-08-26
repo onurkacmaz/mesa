@@ -1,0 +1,194 @@
+<meta charset="utf-8" />
+<title>Mesa icon source</title>
+<!--
+  Mesa'nın uygulama ikonunun tek doğruluk kaynağı. Tarayıcıda açılıp
+  doğrudan incelenebilir; `npm run icon` bunu Chromium'da 1024x1024
+  rasterize edip build/icon.png ve build/icon.icns üretir.
+
+  İki kural çarpışıyor ve çözümü şu: dış siluet macOS'un squircle'ı,
+  çünkü Dock'ta diğer ikonların yanında doğru optik boyutta oturması
+  başka türlü mümkün değil. İçerideki her kenar ise sert — styles.css'in
+  "bu arayüzde hiçbir şey yuvarlak değil" sistemi kabuğun içinde aynen
+  geçerli.
+-->
+<style>
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    width: 1024px;
+    height: 1024px;
+    background: transparent;
+  }
+  svg {
+    display: block;
+  }
+</style>
+
+<svg
+  id="icon"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <!-- Gövde superellipse olarak hesaplanıyor (aşağıdaki script), düz bir
+         rx/ry yuvarlatması değil: macOS'un sürekli köşesi bir yayın ucuna
+         teğet geçmez, ve fark 1024'te görülür. -->
+    <clipPath id="body"><path id="squircle" d="" /></clipPath>
+
+    <!-- Zemin theme.js'in --pane-frame'inden --pane-screen'ine iniyor: ışık
+         yukarıdan, tek yön. Gölge yok, köşe parlaması yok — derinlik tondan. -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#171512" />
+      <stop offset="0.62" stop-color="#0d0c0a" />
+      <stop offset="1" stop-color="#0b0a09" />
+    </linearGradient>
+
+    <!-- Kütle tek bir amber — theme.js'in ACCENT'i. Tepeden tabana çok hafif
+         koyulaşıyor, çünkü ışık yukarıda. Kademe başına ayrı ton verildiğinde
+         teraslar gölge gibi okunuyordu; tek kütle + ışık alan yatay yüzler
+         hem daha temiz hem fiziksel olarak doğru. -->
+    <linearGradient id="rock" x1="0" y1="455" x2="0" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e4ac6a" />
+      <stop offset="1" stop-color="#b8823f" />
+    </linearGradient>
+
+    <!-- Ova düz bir tonla çizildiğinde çamurdan bir bant gibi duruyordu.
+         Ufka doğru açılıp aşağı doğru kararması ona derinlik veriyor; tanecik
+         bantlanmayı zaten kırıyor. -->
+    <linearGradient id="plain" x1="0" y1="790" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#674a20" />
+      <stop offset="1" stop-color="#4a3418" />
+    </linearGradient>
+
+    <!-- Düz dolgular 1024'te bantlanır. İnce tanecik bunu kırar ve yüzeye
+         fiziksel bir his verir; görülmez, hissedilir. -->
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence
+        type="fractalNoise"
+        baseFrequency="0.85"
+        numOctaves="4"
+        stitchTiles="stitch"
+        result="noise"
+      />
+      <feColorMatrix in="noise" type="saturate" values="0" />
+    </filter>
+  </defs>
+
+  <g clip-path="url(#body)">
+    <rect width="1024" height="1024" fill="url(#sky)" />
+
+    <!-- Kademeler buraya script tarafından çiziliyor -->
+    <g id="mesa"></g>
+
+    <rect
+      width="1024"
+      height="1024"
+      filter="url(#grain)"
+      opacity="0.055"
+      style="mix-blend-mode: overlay"
+    />
+  </g>
+</svg>
+
+<script>
+  // ── Gövde ────────────────────────────────────────────────────────────────
+  // 1024'lük tuvalde 824'lük çizim alanı: macOS ikon ızgarasının kendi
+  // oranı. Kenardan kenara doldurmak Dock'ta diğer her ikondan iri gösterir.
+  const CANVAS = 1024;
+  const BODY = 824;
+  const N = 5; // superellipse üssü; macOS'un sürekli köşesine yakın
+
+  function squirclePath(cx, cy, half, n, steps = 720) {
+    const p = [];
+    for (let i = 0; i < steps; i++) {
+      const t = (i / steps) * Math.PI * 2;
+      const c = Math.cos(t);
+      const s = Math.sin(t);
+      const x = cx + half * Math.sign(c) * Math.abs(c) ** (2 / n);
+      const y = cy + half * Math.sign(s) * Math.abs(s) ** (2 / n);
+      p.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`);
+    }
+    return p.join('') + 'Z';
+  }
+
+  document
+    .getElementById('squircle')
+    .setAttribute('d', squirclePath(CANVAS / 2, CANVAS / 2, BODY / 2, N));
+
+  // ── Arazi ────────────────────────────────────────────────────────────────
+  // Silueti asimetrik yapan şey bir tercih değil, mesa'nın kendisi: bir yanda
+  // tek parça dik bir sarp duvar, öbür yanda terasla alçalan yamaç. İki yan da
+  // basamaklandığı anda kütle simetri kazanıyor ve mesa değil piramit okunuyor
+  // — 16px'te de düğün pastasına dönüyor. Sol yüz bu yüzden tek parça.
+  //
+  // Kütle geniş ve alçak olmak zorunda. Kareye yaklaştığı anda arazi olmaktan
+  // çıkıp bloğa, basamaklar da merdivene dönüyor.
+  //
+  // Aynı geometri ürünü de anlatıyor: eşit olmayan, farklı genişlikte, üst
+  // üste binen bloklar — tuvaldeki paneller gibi.
+  const HORIZON = 790;
+  const PLAIN = 'url(#plain)'; // ova: aynı amberin gölgede kalmış hali
+
+  // Işık sol üstten. Yatay yüzler en çok, sola bakan sarp duvar orta, sağa
+  // bakan basamak yüzü hiç almıyor. Düz dolgu + tek ince ışık çizgisi kütleyi
+  // kesilmiş kağıt gibi gösteriyordu; hacim iki değerli gölgelemeden geliyor.
+  // Şeritler dar ve çok açık olduğunda yüzey değil kontur okunuyordu — ışık
+  // alan bir yüzü değil, çizilmiş bir kenarı andırıyordu. Genişletip
+  // kontrastı düşürmek onları yüzeye çeviriyor.
+  const FACES = { tread: '#f0c68d', lip: 18, scarp: '#e6b478', shade: '#9c6c2c', side: 18 };
+
+  // Her bant bir teras. Sol kenar sabit — sarp duvar; sağ kenar basamaklanır.
+  // Basamakların içeri çekilmesi giderek azalıyor: bir moloz yamacı içbükeydir,
+  // eşit basamaklar ise merdiven okunur.
+  const MESA = [
+    { top: 455, left: 227, right: 697 },
+    { top: 539, left: 227, right: 782 },
+    { top: 623, left: 227, right: 837 },
+    { top: 707, left: 227, right: 873 }
+  ];
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const mesa = document.getElementById('mesa');
+
+  function rect(x, y, w, h, fill) {
+    if (w <= 0 || h <= 0 || !fill) return;
+    const r = document.createElementNS(NS, 'rect');
+    r.setAttribute('x', x);
+    r.setAttribute('y', y);
+    r.setAttribute('width', w);
+    r.setAttribute('height', h);
+    r.setAttribute('fill', fill);
+    mesa.appendChild(r);
+  }
+
+  // Ova önce: kenardan kenara, squircle'da kırpılıyor. Kütleyle aynı tonda
+  // denendiğinde sarp sol yüz çerçeveye eriyip her şey tek bir bloğa dönüştü;
+  // ova artık belirgin biçimde koyu ve mesa onun üstünde duruyor.
+  rect(0, HORIZON, CANVAS, CANVAS - HORIZON, PLAIN);
+
+  // Önce bütün kütle, sonra ışık: dolgular üst üste bindiği için gölgeler
+  // aralarına serpiştirilseydi bir sonraki bandın dolgusu onları örterdi.
+  MESA.forEach((b) => rect(b.left, b.top, b.right - b.left, HORIZON - b.top, 'url(#rock)'));
+
+  // Sarp duvar tek parça, o yüzden ışığı da tek parça alıyor. Teraslardan önce
+  // çiziliyor: sol üst köşede yatay yüzle çakışıyorlar ve daha çok ışık alan
+  // yatay yüzün kazanması gerekiyor.
+  rect(MESA[0].left, MESA[0].top, FACES.side, HORIZON - MESA[0].top, FACES.scarp);
+
+  MESA.forEach((b, i) => {
+    // Bir basamağın sağa bakan yüzü yalnızca bir alttaki teras başlayana
+    // kadar açıkta: aşağısını zaten o daha geniş bant kaplıyor.
+    const until = MESA[i + 1] ? MESA[i + 1].top : HORIZON;
+    rect(b.right - FACES.side, b.top, FACES.side, until - b.top, FACES.shade);
+
+    // Işık alan yatay yüz yalnızca AÇIKTA KALAN basamakta. Kütlenin baştan
+    // sona geçen bir çizgisi olsaydı o bir tabaka çizgisi olurdu — terasın
+    // güneş gören tepesi değil.
+    const above = MESA[i - 1];
+    const from = above ? above.right : b.left;
+    rect(from, b.top, b.right - from, FACES.lip, FACES.tread);
+  });
+</script>

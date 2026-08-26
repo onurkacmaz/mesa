@@ -212,7 +212,18 @@ function killTerminal(term) {
   }, 400);
 }
 
+// macOS'ta BrowserWindow'un `icon` seçeneği yok sayılır, ve paketlenmemiş
+// çalıştırmada Dock jenerik Electron ikonunu gösterir. Paketlenmiş uygulama
+// ikonunu kendi bundle'ından alır; burası yalnızca `npm run dev` içindir.
+function setDevDockIcon() {
+  if (process.platform !== 'darwin' || app.isPackaged) return;
+  const icon = path.join(__dirname, '..', 'build', 'icon.png');
+  if (!fs.existsSync(icon)) return;
+  app.dock?.setIcon(icon);
+}
+
 app.whenReady().then(() => {
+  setDevDockIcon();
   buildApplicationMenu();
   const win = createWindow();
 
