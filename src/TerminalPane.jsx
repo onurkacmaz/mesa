@@ -4,7 +4,9 @@ import TerminalView from './TerminalView.jsx';
 import BrowserView, { PageMark, Throbber } from './BrowserView.jsx';
 import { ACCENT } from './theme.js';
 import { setPaneGeom, deletePaneGeom } from './paneGeometry.js';
+import { setPaneTitle, deletePaneTitle } from './paneTitles.js';
 import { SIDES } from './Connections.jsx';
+import { CloseIcon } from './icons.jsx';
 
 // Home-relative, and only the last two segments: the chrome wants to answer
 // "where am I" at a glance, not print an absolute path.
@@ -21,6 +23,16 @@ function shortenPath(p) {
   return `…/${parts.slice(-2).join('/')}`;
 }
 
+// The folder a session is sitting in, which is the part of a path that
+// actually identifies a terminal. Home is '~' rather than the account name:
+// the account name is the same for every pane and so tells you nothing.
+function folderName(p) {
+  const short = shortenPath(p);
+  if (short === '~') return '~';
+  const parts = p.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? '/';
+}
+
 function formatElapsed(seconds) {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
@@ -28,18 +40,9 @@ function formatElapsed(seconds) {
   return `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
-// Drawn rather than typed: the "×" character's optical centre sits above its
-// box centre, so a glyph in a button never quite looks centred.
-function CloseIcon({ size = 9 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 9 9" fill="none" aria-hidden="true">
-      <line x1="1" y1="1" x2="8" y2="8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-      <line x1="8" y1="1" x2="1" y2="8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-    </svg>
-  );
-}
-
-function PromptIcon() {
+// The pane's own identity mark. Exported because the dock names the same
+// windows and has to name them with the same glyph.
+export function PromptMark() {
   return (
     <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
       <path d="M1.5 2.5L5 5.5L1.5 8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
@@ -110,8 +113,37 @@ export default function TerminalPane({
   // taşır — sekmenin adını yazan tarayıcı gibi. Elle adlandırıldığı anda o
   // isim kilitlenir ve sayfa değiştikçe silinip gitmez.
   const isBrowser = pane.kind === 'browser';
-  const displayTitle =
-    isBrowser && !pane.titleLocked && status.pageTitle ? status.pageTitle : pane.title;
+
+  // A terminal is named after the work in it, not after the order it was
+  // opened in: the folder, and the branch when the folder is in a repo. Three
+  // panes called "Terminal 1/2/3" are three panes you have to click to tell
+  // apart. The stock name is only what stands there until the first prompt
+  // reports where the shell actually is.
+  //
+  // Renaming locks it, exactly as it does for a browser pane — once you have
+  // given a pane a name, cd'ing must not silently take it away.
+  const folder = status.cwd ? folderName(status.cwd) : null;
+  // Bir worktree klasörü neredeyse her zaman dalın adını taşır, ve o durumda
+  // "HR-17123-description-fields -> HR-17123-description-fields" aynı şeyi iki
+  // kez söyleyip rayı da başlık çubuğunu da doldurur. Dal klasörden farklıysa
+  // yeni bir bilgidir ve yazılır; aynıysa zaten yazılmıştır.
+  const sessionName = folder
+    ? status.branch && status.branch !== folder
+      ? `${folder} -> ${status.branch}`
+      : folder
+    : null;
+
+  const displayTitle = pane.titleLocked
+    ? pane.title
+    : (isBrowser ? status.pageTitle : sessionName) ?? pane.title;
+
+  // Published so the dock can print the same name this titlebar does — for a
+  // browser that is the page's title, which only exists in here.
+  useLayoutEffect(() => {
+    setPaneTitle(pane.id, displayTitle);
+  }, [pane.id, displayTitle]);
+
+  useEffect(() => () => deletePaneTitle(pane.id), [pane.id]);
 
   const commitTitle = () => {
     setEditingTitle(false);
@@ -236,7 +268,7 @@ export default function TerminalPane({
           </span>
         ) : (
           <span className="pane-icon" style={{ color: accent }}>
-            <PromptIcon />
+            <PromptMark />
           </span>
         )}
 

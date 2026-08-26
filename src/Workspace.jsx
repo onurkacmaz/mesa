@@ -2,19 +2,22 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import TerminalPane from './TerminalPane.jsx';
 import Connections, { anchorOf, nearestEdge } from './Connections.jsx';
 import Minimap from './Minimap.jsx';
+import PaneDock from './PaneDock.jsx';
+import RevealMark from './RevealMark.jsx';
 import { getTerminalEntry } from './terminalRegistry.js';
 import { getPaneGeom } from './paneGeometry.js';
 import { SELECTION_COLOR, ropeColor } from './theme.js';
 
 const CASCADE_STEP = 32;
-const DEFAULT_SIZE = { width: 780, height: 500 };
 
-// Bir tarayıcı panesi terminalinkiyle aynı ölçüde açılamaz: guest'in gördüğü
-// viewport, panenin CSS boyutudur (tuvalin zoom'u onu yalnızca görsel olarak
-// ölçekler). 780px'te siteler dar pencere düzenine düşüyor — YouTube kenar
-// çubuğunu ~792px'in altında tamamen gizliyor, etiketli tam menüyü ancak
-// ~1313px üstünde açıyor. Masaüstü düzenini tetikleyecek genişlikte açılır.
-const BROWSER_SIZE = { width: 1360, height: 780 };
+// Terminal de tarayıcı da aynı ölçüde açılır, ve o ölçüyü tarayıcı belirler:
+// guest'in gördüğü viewport panenin CSS boyutudur (tuvalin zoom'u onu yalnızca
+// görsel olarak ölçekler). 780px'te siteler dar pencere düzenine düşüyor —
+// YouTube kenar çubuğunu ~792px'in altında tamamen gizliyor, etiketli tam
+// menüyü ancak ~1313px üstünde açıyor. Masaüstü düzenini tetikleyecek
+// genişlikte açılır; terminal de aynı kutuyu alınca yan yana duran iki pane
+// aynı ızgaraya oturuyor.
+const DEFAULT_SIZE = { width: 1360, height: 780 };
 // Widened along with the pan bound coming out. The old ceiling of 2.5x was
 // tuned against a view you could not freely aim; now that you can put the
 // cursor on a single line of output and drive into it, there is a reason to go
@@ -34,6 +37,46 @@ const DOT_SPACING = 28;
 const ZOOM_WHEEL_RATE = 0.002;
 const ZOOM_WHEEL_MAX_STEP = 0.12;
 const ZOOM_BUTTON_RATIO = 1.1;
+
+// Travelling to a pane from the dock. The trip is animated rather than cut
+// because the canvas has no landmarks: a cut leaves you somewhere new with no
+// idea which way you came from, while a short glide keeps the two places
+// related. Short enough that it never feels like waiting.
+const REVEAL_MS = 320;
+const REVEAL_PAD = 72;
+// How long the arrival marks stay on the canvas, and with them the colour in
+// the ropes tied to the pane. Kept in step with the keyframes in styles.css —
+// 320 flying, 200 held, 300 letting go.
+const REVEAL_MARK_MS = 820;
+// The colour leaves before the marks do, so the ropes' 120ms fade finishes on
+// the same beat the brackets do and the whole arrival exhales at once.
+const REVEAL_LIT_MS = 700;
+// Below this a pane is on screen but not readable, so arriving at it would
+// answer the wrong question. Landing zoom is raised to frame it instead.
+const REVEAL_LEGIBLE_ZOOM = 0.5;
+// And the other end: how much bigger than the window a pane may be and still
+// be worth arriving at without zooming out. A pane taller than the viewport is
+// the ordinary working state — panes open at 1360x780 and most windows are
+// shorter than that — so "does it fit entirely" is the wrong test. It would
+// drop the view to ~81% on every single trip and quietly undo the zoom the
+// user chose. Past half again the window you would land looking at a fragment,
+// and that is when framing wins.
+const REVEAL_MAX_OVERFLOW = 1.5;
+const easeOutCubic = (t) => 1 - (1 - t) ** 3;
+
+// Overshoots its target by about five percent and settles back, so the view
+// arrives with a click rather than coasting to a halt. The corner marks run on
+// a cubic-bezier in CSS that mirrors this — near enough that the two land
+// together, though the bezier's peak sits a hair higher.
+//
+// Position only. Run on the zoom as well it would carry the scale past its
+// target, and past 1.028 of a big zoom-out that lands beyond zero — a negative
+// scale, which turns the canvas inside out for a frame. Zoom eases plainly.
+const easeOutBack = (t) => {
+  const c = 1.14;
+  const u = t - 1;
+  return 1 + (c + 1) * u ** 3 + c * u ** 2;
+};
 
 // The floor used to be "whatever still keeps the canvas covering the
 // viewport", which made it depend on the window: 27% on a laptop, 43% on a
@@ -92,23 +135,6 @@ function nextId(prefix) {
 // never land on the same tint back to back.
 let sessionCounter = 0;
 
-function MinusIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-      <line x1="1.5" y1="5.5" x2="9.5" y2="5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-      <line x1="1.5" y1="5.5" x2="9.5" y2="5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-      <line x1="5.5" y1="1.5" x2="5.5" y2="9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-    </svg>
-  );
-}
-
 function Kbd({ children }) {
   return <span className="kbd">{children}</span>;
 }
@@ -141,6 +167,35 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
   // never come out the same colour, even after the ones between them are cut.
   const ropeIndexRef = useRef(0);
   const minimapApiRef = useRef(null);
+
+  // The arrival: which pane is being landed on, and a token that changes on
+  // every trip so the marks remount and replay even when you reveal the same
+  // pane twice in a row.
+  const [reveal, setReveal] = useState(null);
+  const revealTokenRef = useRef(0);
+  const revealTimersRef = useRef([]);
+  const clearRevealTimers = useCallback(() => {
+    revealTimersRef.current.forEach(clearTimeout);
+    revealTimersRef.current = [];
+  }, []);
+
+  // The reveal glide is the only thing in here that moves the view on its own,
+  // so any deliberate input has to be able to take the wheel back off it
+  // mid-flight. Every gesture that moves the view calls this first.
+  const revealRafRef = useRef(null);
+  const cancelReveal = useCallback(() => {
+    if (revealRafRef.current !== null) {
+      cancelAnimationFrame(revealRafRef.current);
+      revealRafRef.current = null;
+    }
+  }, []);
+  useEffect(
+    () => () => {
+      cancelReveal();
+      clearRevealTimers();
+    },
+    [cancelReveal, clearRevealTimers]
+  );
 
   const zCounter = useRef(1);
   const canvasRef = useRef(null);
@@ -239,13 +294,14 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
     (point) => {
       const container = canvasRef.current;
       if (!container) return;
+      cancelReveal();
       const z = zoomRef.current;
       commitView(undefined, {
         x: container.clientWidth / 2 - point.x * z,
         y: container.clientHeight / 2 - point.y * z
       });
     },
-    [commitView]
+    [commitView, cancelReveal]
   );
 
   // Panning is a CSS translate driven by state — .canvas is deliberately NOT
@@ -258,6 +314,7 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
     (computeNext, clientX, clientY) => {
       const container = canvasRef.current;
       if (!container) return;
+      cancelReveal();
       const oldZoom = zoomRef.current;
       const nextZoom = clampZoom(computeNext(oldZoom));
       if (nextZoom === oldZoom) return;
@@ -273,15 +330,16 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
         y: mouseY - (mouseY - oldPan.y) * ratio
       });
     },
-    [commitView]
+    [commitView, cancelReveal]
   );
 
   const panBy = useCallback(
     (dx, dy) => {
+      cancelReveal();
       const { x, y } = panRef.current;
       commitView(undefined, { x: x + dx, y: y + dy });
     },
-    [commitView]
+    [commitView, cancelReveal]
   );
 
   // Start with the canvas origin under the middle of the window. There is no
@@ -312,6 +370,7 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
     const container = canvasRef.current;
     const box = contentBounds(panesRef.current);
     if (!container || !box) return;
+    cancelReveal();
     const PAD = 80;
     const width = box.maxX - box.minX;
     const height = box.maxY - box.minY;
@@ -325,7 +384,7 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
       x: container.clientWidth / 2 - ((box.minX + box.maxX) / 2) * nextZoom,
       y: container.clientHeight / 2 - ((box.minY + box.maxY) / 2) * nextZoom
     });
-  }, [commitView]);
+  }, [commitView, cancelReveal]);
 
   // Space (or the middle mouse button) pans; a plain left-drag on empty
   // canvas draws a marquee selection instead. Two-finger scroll pans too —
@@ -371,6 +430,7 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
       // correct if it is ever given dimensions again.
       if (e.target !== canvasRef.current && e.target !== contentRef.current) return;
 
+      cancelReveal();
       setSelectedConnId(null);
 
       if (spacePressedRef.current || e.button === 1) {
@@ -388,7 +448,7 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
       setMarqueeRect(initialRect);
       setIsMarqueeSelecting(true);
     },
-    [localPointFromEvent]
+    [localPointFromEvent, cancelReveal]
   );
 
   useEffect(() => {
@@ -826,7 +886,7 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
       const step = (index % 5) - 2;
       const offset = step * CASCADE_STEP;
 
-      const size = kind === 'browser' ? BROWSER_SIZE : DEFAULT_SIZE;
+      const size = DEFAULT_SIZE;
 
       let x = 48 + offset;
       let y = 48 + offset;
@@ -953,6 +1013,98 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
     setPanes((prev) => prev.map((p) => (p.id === id ? { ...p, z } : p)));
   }, []);
 
+  // Bring a pane to the middle of the window and hand it the keyboard,
+  // wherever the view happens to be — the dock's whole job, and the one move
+  // that makes an unbounded canvas safe to wander.
+  //
+  // Geometry comes from paneGeometry rather than from `pane`, for the same
+  // reason the ropes read it: mid-drag, react-rnd owns the dragged pane's
+  // position and pane.x/y is a frame or more stale.
+  const revealPane = useCallback(
+    (id) => {
+      const container = canvasRef.current;
+      if (!container) return;
+      const pane = panesRef.current.find((p) => p.id === id);
+      if (!pane) return;
+      const r = getPaneGeom(id) ?? { x: pane.x, y: pane.y, w: pane.width, h: pane.height };
+
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+
+      // Two ways the current zoom can be the wrong one to arrive at: too far
+      // in and the pane does not fit on screen, too far out and it is a smudge
+      // you cannot read. Anywhere between those, the zoom you were working at
+      // is the zoom you keep — a jump that silently rescales the work would
+      // undo a deliberate choice every time you changed window.
+      const fromZoom = zoomRef.current;
+      const overflow = Math.max((r.w * fromZoom) / cw, (r.h * fromZoom) / ch);
+      const keepZoom =
+        fromZoom >= REVEAL_LEGIBLE_ZOOM && overflow <= REVEAL_MAX_OVERFLOW;
+      // Only reached when the zoom you were at is not the one to arrive at.
+      const fit = Math.min((cw - REVEAL_PAD * 2) / r.w, (ch - REVEAL_PAD * 2) / r.h);
+      const toZoom = keepZoom ? fromZoom : clampZoom(Math.min(fit, 1));
+
+      const fromPan = panRef.current;
+      const toPan = {
+        x: cw / 2 - (r.x + r.w / 2) * toZoom,
+        y: ch / 2 - (r.y + r.h / 2) * toZoom
+      };
+      const dx = toPan.x - fromPan.x;
+      const dy = toPan.y - fromPan.y;
+      const dz = toZoom - fromZoom;
+
+      cancelReveal();
+
+      // Raised before the flight, not after it: the brackets fly in over the
+      // same 320ms the view does, so the two motions are one arrival. Waiting
+      // for the landing would make them an afterthought stuck on the end.
+      revealTokenRef.current += 1;
+      clearRevealTimers();
+      setReveal({ id, rect: r, token: revealTokenRef.current, lit: true });
+      revealTimersRef.current = [
+        setTimeout(
+          () => setReveal((current) => (current ? { ...current, lit: false } : current)),
+          REVEAL_LIT_MS
+        ),
+        setTimeout(() => setReveal(null), REVEAL_MARK_MS)
+      ];
+
+      const still = Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(dz) < 0.001;
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (still || reduced) {
+        commitView(dz === 0 ? undefined : toZoom, toPan);
+      } else {
+        const started = performance.now();
+        const step = (now) => {
+          const t = Math.min(1, (now - started) / REVEAL_MS);
+          const e = easeOutBack(t);
+          // undefined when the zoom is being kept: commitView only touches
+          // React state when the zoom actually changes, so a pure travel
+          // stays entirely out of render — same bargain the pan transform
+          // makes everywhere else in here.
+          commitView(dz === 0 ? undefined : fromZoom + dz * easeOutCubic(t), {
+            x: fromPan.x + dx * e,
+            y: fromPan.y + dy * e
+          });
+          revealRafRef.current = t < 1 ? requestAnimationFrame(step) : null;
+        };
+        revealRafRef.current = requestAnimationFrame(step);
+      }
+
+      // Selection is what actually focuses the pane (TerminalView focuses its
+      // xterm when `focused` turns on), so it is set now rather than when the
+      // glide lands — otherwise everything typed during the trip goes nowhere.
+      selectPane(id, false);
+
+      // ...except when the pane was already the whole selection: `focused`
+      // never flips, so that effect never runs, and the keyboard stays
+      // wherever it was — a toolbar button, say. Asked for directly here, the
+      // rail always hands over the keyboard as well as the view.
+      getTerminalEntry(id)?.term?.focus();
+    },
+    [commitView, cancelReveal, clearRevealTimers, selectPane]
+  );
+
   const beginGroupDrag = useCallback((anchorId, anchorPos) => {
     const currentSelected = selectedIdsRef.current;
     const idsToMove = currentSelected.includes(anchorId) && currentSelected.length > 1 ? currentSelected : [anchorId];
@@ -1023,40 +1175,10 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
 
   return (
     <div className={`workspace${active ? '' : ' workspace-hidden'}`} aria-hidden={!active}>
-      <header className="toolbar">
-        <button className="new-terminal-btn" onClick={() => addTerminal('terminal')}>
-          <PlusIcon />
-          <span>Yeni Terminal</span>
-          <Kbd>⌘N</Kbd>
-        </button>
-
-        <button className="new-terminal-btn" onClick={() => addTerminal('browser')}>
-          <PlusIcon />
-          <span>Yeni Browser</span>
-          <Kbd>⌘B</Kbd>
-        </button>
-
-        <div className="zoom-controls">
-          <button className="zoom-btn" onClick={zoomOut} title="Uzaklaştır (⌘−)">
-            <MinusIcon />
-          </button>
-          <button className="zoom-value" onClick={zoomReset} title="Sıfırla (⌘0)">
-            {Math.round(zoom * 100)}%
-          </button>
-          <button className="zoom-btn" onClick={zoomIn} title="Yakınlaştır (⌘+)">
-            <PlusIcon />
-          </button>
-        </div>
-
-        <div className="toolbar-spacer" />
-
-        {selectionCount > 1 && <div className="toolbar-selection">{selectionCount} seçili</div>}
-
-        <div className="toolbar-count">
-          {panes.length} açık
-        </div>
-      </header>
-
+      {/* No toolbar row. The two things it held — opening a window and
+          changing the view — both belong to the rail at the bottom, next to
+          the list of what is already open. Deleting the row gives the canvas
+          44px back and leaves the title bar to workflows alone. */}
       <div
         className={`canvas${isPanning ? ' panning' : ''}`}
         ref={canvasRef}
@@ -1114,10 +1236,15 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
             zoomRef={zoomRef}
             draftRef={draftRef}
             selectedId={selectedConnId}
+            litPaneId={reveal?.lit ? reveal.id : null}
             onSelect={selectConnection}
             onEndpointDown={startEndpointDrag}
             apiRef={connApiRef}
           />
+
+          {/* Over the panes rather than under them: it is an instrument
+              aimed at one of them, not another box on the canvas. */}
+          {reveal && <RevealMark rect={reveal.rect} zoom={zoom} token={reveal.token} />}
 
           {marqueeRect && (
             <div
@@ -1197,6 +1324,23 @@ export default function Workspace({ theme, active, onRequestClose, onPaneCountCh
           </div>
         )}
       </div>
+
+      {/* A sibling of the canvas, not a layer over it: the minimap and the
+          confirmation rail are positioned inside the canvas, so giving the
+          dock its own row means neither of them has to know it exists. */}
+      <PaneDock
+        panes={panes}
+        selectedIds={selectedIds}
+        selectionCount={selectionCount}
+        zoom={zoom}
+        onReveal={revealPane}
+        onClose={closePane}
+        onNewTerminal={() => addTerminal('terminal')}
+        onNewBrowser={() => addTerminal('browser')}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onZoomReset={zoomReset}
+      />
     </div>
   );
 }

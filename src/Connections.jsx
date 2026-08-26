@@ -214,6 +214,11 @@ export default function Connections({
   zoomRef,
   draftRef,
   selectedId,
+  // The pane currently being arrived at. Its ropes come up to full colour for
+  // the length of that moment — a rope is the only thing on the canvas that
+  // already carries a hue of its own, so this is where the arrival gets to be
+  // in colour without inventing a palette for it.
+  litPaneId,
   onSelect,
   onEndpointDown,
   apiRef
@@ -462,7 +467,9 @@ export default function Connections({
           <g
             key={conn.id}
             ref={setNodes(conn.id, 'group')}
-            className={`conn${selectedId === conn.id ? ' conn-selected' : ''}`}
+            className={`conn${selectedId === conn.id ? ' conn-selected' : ''}${
+              litPaneId && (conn.from === litPaneId || conn.to === litPaneId) ? ' conn-lit' : ''
+            }`}
             // Handed to CSS as a custom property rather than set on stroke and
             // fill directly, so one value colours the line and its arrowhead
             // and the stylesheet keeps every other decision about them.

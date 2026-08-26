@@ -5,7 +5,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 // Chrome neyse o — hap biçimli omnibox, dairesel hover hedefleri, Material
 // ikonlar, Chrome'un gri paleti ve sekmedeki dönen yükleme işareti.
 
-export const BROWSER_HOME = 'https://en.wikipedia.org/wiki/Terminal_emulator';
+// Yeni bir pane boş açılır. Guest gerçekten about:blank'te duruyor; adres
+// çubuğunda "about:blank" yazmaz ve ekranı beyaz bir dikdörtgen kaplamaz —
+// ikisi de aşağıda boş adres (url === '') durumuyla karşılanıyor.
+export const BROWSER_HOME = 'about:blank';
 
 // Electron, varsayılan User-Agent'ın sonuna uygulamanın adını ve
 // "Electron/32.x" jetonunu ekler. Bazı siteler — YouTube en bilineni — UA'yı
@@ -13,6 +16,10 @@ export const BROWSER_HOME = 'https://en.wikipedia.org/wiki/Terminal_emulator';
 // ikon bileşenleri boş kalır. Buradaki tek iş o iki jetonu düşürüp geriye
 // kalan gerçek Chrome dizesini guest'e vermek; sürüm sabitlenmiyor, çalışan
 // Chromium'un kendi sürümü kullanılıyor.
+// Chrome'un omnibox'ındaki karşılığı "Search Google or type a URL"; burada
+// arama motoru varsayımı yapılmadan aynı işi görüyor.
+const OMNIBOX_HINT = 'Adres girin';
+
 const CHROME_UA = navigator.userAgent
   .replace(/\sElectron\/\S+/, '')
   .replace(/\s\S+\/\S+(?=\sChrome\/)/, '');
@@ -123,10 +130,14 @@ export default function BrowserView({ paneId, focused, onStatus }) {
   const inputRef = useRef(null);
   const menuRef = useRef(null);
 
-  const [url, setUrl] = useState(BROWSER_HOME);
-  const [draft, setDraft] = useState(BROWSER_HOME);
+  // Boş adres, boş sayfa. about:blank bir adres değil bir yokluk, o yüzden
+  // durumda da öyle tutuluyor: adres çubuğu placeholder'ını gösterir, ekranı
+  // uygulamanın kendi yüzeyi kaplar.
+  const [url, setUrl] = useState('');
+  const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // about:blank'in yüklenecek bir şeyi yok: dönen işaretle açılmaz.
+  const [loading, setLoading] = useState(false);
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
   const [error, setError] = useState(null);
@@ -166,21 +177,26 @@ export default function BrowserView({ paneId, focused, onStatus }) {
     };
     const onNavigate = (e) => {
       if (e.url) {
-        setUrl(e.url);
+        const shown = e.url === BROWSER_HOME ? '' : e.url;
+        setUrl(shown);
         setEditing(false);
-        setDraft(e.url);
+        setDraft(shown);
       }
       setError(null);
       syncNav();
     };
     const onNavigateInPage = (e) => {
       if (e.isMainFrame && e.url) {
-        setUrl(e.url);
-        setDraft(e.url);
+        const shown = e.url === BROWSER_HOME ? '' : e.url;
+        setUrl(shown);
+        setDraft(shown);
       }
       syncNav();
     };
-    const onTitle = (e) => onStatus?.(paneId, { pageTitle: e.title });
+    // Boş sayfanın başlığı yoktur; Chromium'un koyduğu "about:blank" bir ad
+    // değil, pane'in başlık çubuğunda da öyle durmamalı.
+    const onTitle = (e) =>
+      onStatus?.(paneId, { pageTitle: e.title && e.title !== BROWSER_HOME ? e.title : null });
     const onFavicon = (e) => onStatus?.(paneId, { favicon: e.favicons?.[0] ?? null });
     const onFail = (e) => {
       // -3 (ABORTED) sıradan bir iptaldir: bir yükleme biterken yeni bir
@@ -326,6 +342,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
               ref={inputRef}
               className="cr-omnibox-input"
               value={draft}
+              placeholder={OMNIBOX_HINT}
               spellCheck={false}
               autoComplete="off"
               onChange={(e) => setDraft(e.target.value)}
@@ -344,14 +361,26 @@ export default function BrowserView({ paneId, focused, onStatus }) {
         ) : (
           <button type="button" className="cr-omnibox" onClick={beginEditing} title={url}>
             <span className={`cr-omnibox-icon${parts.insecure ? ' cr-omnibox-icon-warn' : ''}`}>
-              {parts.insecure ? <IconInfo /> : parts.secure ? <IconLock /> : <IconInfo />}
+              {!url ? (
+                <IconSearch />
+              ) : parts.insecure ? (
+                <IconInfo />
+              ) : parts.secure ? (
+                <IconLock />
+              ) : (
+                <IconInfo />
+              )}
             </span>
             {parts.insecure && <span className="cr-notsecure">Güvenli değil</span>}
-            <span className="cr-url">
-              {parts.prefix && !parts.insecure && <span className="cr-url-dim">{parts.prefix}</span>}
-              <span className="cr-url-host">{parts.host}</span>
-              {parts.rest && <span className="cr-url-dim">{parts.rest}</span>}
-            </span>
+            {url ? (
+              <span className="cr-url">
+                {parts.prefix && !parts.insecure && <span className="cr-url-dim">{parts.prefix}</span>}
+                <span className="cr-url-host">{parts.host}</span>
+                {parts.rest && <span className="cr-url-dim">{parts.rest}</span>}
+              </span>
+            ) : (
+              <span className="cr-url cr-url-empty">{OMNIBOX_HINT}</span>
+            )}
           </button>
         )}
 
@@ -437,6 +466,11 @@ export default function BrowserView({ paneId, focused, onStatus }) {
 
       <div className="pane-screen browser-screen">
         <webview ref={hostRef} src={BROWSER_HOME} useragent={CHROME_UA} className="browser-webview" />
+        {/* about:blank Chromium'da beyaz boyanır ve koyu temada pane'in içinde
+            parlayan bir dikdörtgen bırakır. Boş sayfa uygulamanın kendi ekran
+            yüzeyiyle kaplanıyor: gerçekten boş, ve doğru renkte. İlk adrese
+            gidildiği anda kalkar. */}
+        {!url && !error && <div className="browser-blank" />}
         {/* Menü açıkken sayfaya yapılan tıklama host belgesine hiç ulaşmaz —
             guest ayrı bir WebContents. Sayfanın üzerindeki bu şeffaf katman
             o tıklamayı yakalar ve menüyü Chrome'daki gibi kapatır. */}

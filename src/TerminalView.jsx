@@ -218,15 +218,38 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
     const csiEraseDisplay = term.parser.registerCsiHandler({ final: 'J' }, (params) => params[0] === 3);
 
     // OSC 7 carries the working directory, so the chrome can show where the
-    // session actually is.
+    // session actually is — and, from that directory, which branch the work is
+    // on. The branch is resolved on every prompt rather than only when the
+    // directory changes, because `git checkout` moves the branch without
+    // moving the shell.
+    //
+    // Answers can land out of order (two prompts in quick succession, one
+    // path deeper than the other), so each request carries a ticket and only
+    // the newest one is allowed to report.
+    let cwdTicket = 0;
+    const reportCwd = (dir) => {
+      report({ cwd: dir });
+      const ticket = ++cwdTicket;
+      Promise.resolve(window.terminalApi.gitBranch?.(dir))
+        .then((branch) => {
+          if (ticket === cwdTicket) report({ branch: branch ?? null });
+        })
+        .catch(() => {});
+    };
+
     const oscCwdDisposable = term.parser.registerOscHandler(7, (data) => {
       const match = /^file:\/\/[^/]*(\/.*)$/.exec(data);
       if (match) {
+        // Decoded first, and only then reported: with the call inside the try
+        // a throw from anywhere downstream would run the whole report a second
+        // time on the raw path.
+        let dir;
         try {
-          report({ cwd: decodeURIComponent(match[1]) });
+          dir = decodeURIComponent(match[1]);
         } catch {
-          report({ cwd: match[1] });
+          dir = match[1];
         }
+        reportCwd(dir);
       }
       return true;
     });

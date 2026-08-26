@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Workspace from './Workspace.jsx';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
+import { CloseIcon, PlusIcon } from './icons.jsx';
 
 // Bare bespoke mark: a prompt chevron + cursor, drawn as paths (no tile
 // behind it). The chevron carries a tight two-stop amber gradient — the
@@ -23,24 +24,6 @@ function BrandMark({ theme }) {
         strokeLinejoin="miter"
       />
       <line x1="9.4" y1="12" x2="13.2" y2="12" stroke="url(#brandGradient)" strokeWidth="1.6" strokeLinecap="square" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-      <line x1="5" y1="1" x2="5" y2="9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-      <line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg width="8" height="8" viewBox="0 0 9 9" fill="none" aria-hidden="true">
-      <line x1="1" y1="1" x2="8" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
-      <line x1="8" y1="1" x2="1" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
     </svg>
   );
 }

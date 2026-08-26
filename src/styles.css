@@ -125,17 +125,6 @@ body {
   background: var(--bg-app);
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  height: 44px;
-  flex: 0 0 auto;
-  background: var(--bg-toolbar);
-  border-bottom: 1px solid var(--border-soft);
-}
-
 .kbd {
   font-family: 'SF Mono', Menlo, Consolas, monospace;
   font-size: 10.5px;
@@ -144,41 +133,6 @@ body {
   border: 1px solid var(--border-soft);
   padding: 1px 5px;
   line-height: 1.5;
-}
-
-.new-terminal-btn {
-  -webkit-app-region: no-drag;
-  appearance: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  background: var(--hover-soft);
-  color: var(--text);
-  font-size: 12.5px;
-  font-weight: 500;
-  padding: 5px 6px 5px 11px;
-  cursor: pointer;
-  transition: background 100ms ease, border-color 100ms ease;
-  white-space: nowrap;
-}
-
-.new-terminal-btn:hover {
-  background: var(--hover);
-}
-
-.zoom-controls {
-  -webkit-app-region: no-drag;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--hover-soft);
-  border: 1px solid var(--border-soft);
-  padding: 3px;
-}
-
-.toolbar-spacer {
-  flex: 1 1 auto;
 }
 
 /* Clicking a control should not leave the OS focus ring parked on it — that
@@ -191,42 +145,6 @@ button:focus:not(:focus-visible) {
 button:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
-}
-
-.zoom-btn {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.zoom-btn:hover {
-  background: var(--hover);
-  color: var(--text-strong);
-}
-
-.zoom-value {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-mid);
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
-  min-width: 42px;
-  padding: 0 4px;
-  height: 22px;
-  cursor: pointer;
-}
-
-.zoom-value:hover {
-  background: var(--hover);
-  color: var(--text-strong);
 }
 
 /* Theme control: three words, not a sun and a moon on a sliding pill. The
@@ -261,21 +179,6 @@ button:focus-visible {
 .theme-option[aria-pressed='true'] {
   background: var(--hover);
   color: var(--text-strong);
-}
-
-.toolbar-selection {
-  font-size: 11.5px;
-  color: var(--accent);
-  white-space: nowrap;
-}
-
-.toolbar-count {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  color: var(--text-faint);
-  white-space: nowrap;
 }
 
 .canvas {
@@ -691,13 +594,18 @@ button:focus-visible {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
+/* The cap was 45% back when the name was a label ("Terminal 3") and the path
+   beside it was the only real information on the row. The name now carries the
+   folder and the branch, so it is the identifier and the path is the context —
+   and at 45% the branch was the exact substring the ellipsis ate. The title
+   takes the room first; .pane-cwd already shrinks and truncates. */
 .pane-title {
   font-size: 12px;
   font-weight: 550;
   letter-spacing: -0.01em;
   color: var(--text-mid);
-  flex: 0 0 auto;
-  max-width: 45%;
+  flex: 0 1 auto;
+  max-width: 72%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -953,7 +861,6 @@ button:focus-visible {
   border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
-
 /* ── Shell ────────────────────────────────────────────────────────────────
    The title bar carries the workflows themselves. Tabs live in the window's
    own drag region beside the traffic lights, the way a document app puts its
@@ -970,6 +877,11 @@ button:focus-visible {
   flex: 0 0 auto;
   background: var(--bg-app);
   -webkit-app-region: drag;
+  /* No bottom edge, deliberately. The active tab takes the canvas's own colour
+     and sits flush at the bottom of this bar, so tab and workspace read as one
+     sheet — a rule drawn across here would cut exactly the join that makes
+     that work. The strip is told apart from the canvas by the canvas's dot
+     field and grain, not by a line. */
 }
 
 .titlebar-brand {
@@ -1025,7 +937,10 @@ button:focus-visible {
 }
 
 .workflow-tab-active {
-  background: var(--bg-toolbar);
+  /* The sheet below used to be the toolbar row; with that row deleted it is
+     the canvas, and this has to follow it or the active tab stops joining
+     anything and turns into a highlighted button. */
+  background: var(--bg-canvas);
   color: var(--text-strong);
 }
 
@@ -1052,8 +967,11 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  /* 18, matched to the rail's × and a step under the pane's 20. The three used
+     to be 16/16/20 around glyphs of 8/8/9, which is how the same mark ended up
+     reading as a different size in each place. */
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
   cursor: pointer;
   opacity: 0;
@@ -1542,4 +1460,512 @@ button:focus-visible {
   width: 13px;
   height: 13px;
   object-fit: contain;
+}
+
+/* ── Alt ray ──────────────────────────────────────────────────────────────
+   One rail at the bottom carrying the three things that are about windows and
+   the view: open another, what is already open, and how far out you are
+   standing. It replaced a whole 44px toolbar row — the buttons that lived up
+   there were never about the title bar, and the zoom readout belongs next to
+   the list it is scaled against.
+
+   It sits in the workflow's own column under the canvas rather than floating
+   on top of it: the minimap and the confirm rail already live inside the
+   canvas, and a fourth floating panel would have to be routed around both.
+
+   Held at a fixed height whether or not anything is open, so opening the very
+   first terminal does not resize the canvas underneath the pointer. */
+.pane-dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  background: var(--bg-toolbar);
+  border-top: 1px solid var(--titlebar-edge);
+}
+
+/* The same lip the panes and the minimap catch light on. It is what stops the
+   rail reading as a strip of flat fill welded under the canvas: the edge picks
+   up a highlight, so the surface turns rather than simply ends. */
+.pane-dock::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--pane-lip);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* The canvas's own grain, at the canvas's own strength, so the rail is made of
+   the same material as the surface above it rather than being a band of flat
+   paint stuck underneath. Behind the names, never over them: noise laid across
+   text is the version of this that just makes it harder to read. */
+.pane-dock::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.dock-actions,
+.dock-zoom,
+.pane-dock-empty {
+  position: relative;
+  z-index: 1;
+}
+
+.dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+/* Bordered, where the window names beside them are bare. The edge is the whole
+   distinction: an outline says this does something, a bare name says this is
+   something. */
+.dock-action {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+
+.dock-action:hover {
+  background: var(--hover-soft);
+  border-color: var(--border);
+  color: var(--text-strong);
+}
+
+.dock-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pane-dock-empty {
+  font-size: 11.5px;
+  color: var(--text-ghost);
+  letter-spacing: 0.01em;
+}
+
+.pane-dock-list {
+  position: relative;
+  /* Above the grain. */
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  /* Full height rather than content height: overflow-x makes this a scroll
+     box, and a scroll box exactly as tall as its items would clip the keyboard
+     focus ring off the top and bottom of whichever one is tabbed to. */
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pane-dock-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* The current pane is not marked by filling its name in: one set of brackets
+   travels along the rail and closes around it — the same shape that snaps
+   around the pane itself out on the canvas when you arrive there, at a
+   quarter of the size. The rail and the canvas say "this one" the same way.
+
+   A child of the scrolling list, so it rides the scroll with the names it is
+   pointing at instead of hovering over a fixed spot. */
+.dock-cursor {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 24px;
+  margin-top: -12px;
+  pointer-events: none;
+  opacity: 0;
+  --bracket-arm: 6px;
+  --bracket-weight: 1px;
+  transition:
+    transform 240ms cubic-bezier(0.22, 1.2, 0.36, 1),
+    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 140ms ease;
+}
+
+/* Withheld on the first placement: the brackets should appear where they
+   belong, not slide in from the left edge of the rail. */
+.dock-cursor-placed {
+  transition: opacity 140ms ease;
+}
+
+.dock-cursor-on {
+  opacity: 1;
+}
+
+/* The name and its × are two buttons in a row; this is what holds them
+   together, carries the hover, and is what the brackets are measured against. */
+.dock-entry {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  max-width: 250px;
+  flex: 0 0 auto;
+  transition: background 100ms ease;
+}
+
+/* Hover fills, selection does not. The two states differ in kind rather than
+   in degree, so a pointer resting on a name can never be mistaken for the pane
+   you are actually in. */
+.dock-entry:hover {
+  background: var(--hover-soft);
+}
+
+.dock-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 4px 0 10px;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 100ms ease;
+}
+
+.dock-entry:hover .dock-item {
+  color: var(--text-mid);
+}
+
+/* The pane's own three steps, carried onto its name: resting, part of a
+   selection, and the one holding the keyboard. */
+.dock-entry-sel .dock-item {
+  color: var(--text-mid);
+}
+
+.dock-entry-on .dock-item,
+.dock-entry-on:hover .dock-item {
+  color: var(--text-strong);
+}
+
+.dock-item-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--text-ghost);
+  transition: color 100ms ease;
+}
+
+.dock-entry:hover .dock-item-mark {
+  color: var(--text-faint);
+}
+
+.dock-entry-sel .dock-item-mark {
+  color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.dock-entry-on .dock-item-mark,
+.dock-entry-on:hover .dock-item-mark {
+  color: var(--accent);
+}
+
+.dock-item-mark-page {
+  opacity: 0.78;
+}
+
+/* One line of ordinary inline text, deliberately NOT a nested flex row. As a
+   flex row the folder and the branch shrank together and the folder — the part
+   that actually says which window this is — was the first thing crushed: a
+   worktree called HR-17123-description-fields next to a branch of the same
+   name came out as "s -> HR-17123-description-fi…". Laid out inline the
+   truncation happens where it should, at the end, so the folder is always
+   whole and the branch is what gives way. */
+.dock-item-label {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Three tones for one name: the folder in the item's own colour, the branch a
+   step behind it, and the arrow quietest of all. It is the difference between
+   reading a name and reading a string. */
+.dock-item-sep {
+  margin: 0 5px;
+  color: var(--text-ghost);
+  font-size: 10px;
+}
+
+.dock-item-branch {
+  color: var(--text-faint);
+}
+
+.dock-entry-on .dock-item-branch {
+  color: var(--text-dim);
+}
+
+/* Always in the flow, only sometimes visible — the row's width must not change
+   when the pointer crosses it, because the brackets are measured from that
+   width and would twitch on every pass. */
+.dock-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-right: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.dock-entry:hover .dock-close,
+.dock-entry-on .dock-close,
+.dock-close:focus-visible {
+  opacity: 1;
+}
+
+.dock-close:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.dock-zoom {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.dock-zoom-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.dock-zoom-btn:hover {
+  background: var(--hover-soft);
+  color: var(--text-strong);
+}
+
+/* The one genuinely numeric string on the rail, so it gets the mono and the
+   tabular figures — and nothing else here does. */
+.dock-zoom-value {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: 'SF Mono', Menlo, ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  height: 22px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.dock-zoom-value:hover {
+  background: var(--hover-soft);
+  color: var(--text-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-cursor {
+    transition: opacity 140ms ease;
+  }
+}
+
+/* ── Köşe braketleri ─────────────────────────────────────────────────────
+   One bespoke shape, two uses: around the pane the view has just flown to, and
+   around the name of the current pane down on the rail. Arm length, weight and
+   run-in distance all arrive as custom properties. */
+.bracket-corner {
+  position: absolute;
+  width: var(--bracket-arm);
+  height: var(--bracket-arm);
+  /* Amber, and only amber: the ropes carry the palette, the chrome carries the
+     one accent. A second hue here would make the mark read as a status. */
+  border-color: var(--bracket-color, var(--accent));
+  border-style: solid;
+  border-width: 0;
+  /* Zero unless something asks for it, so the rail's brackets sit still while
+     the canvas's fly in. */
+  --bracket-run: 0px;
+}
+
+.bracket-tl {
+  top: 0;
+  left: 0;
+  border-top-width: var(--bracket-weight);
+  border-left-width: var(--bracket-weight);
+  --bracket-dx: calc(var(--bracket-run) * -1);
+  --bracket-dy: calc(var(--bracket-run) * -1);
+}
+
+.bracket-tr {
+  top: 0;
+  right: 0;
+  border-top-width: var(--bracket-weight);
+  border-right-width: var(--bracket-weight);
+  --bracket-dx: var(--bracket-run);
+  --bracket-dy: calc(var(--bracket-run) * -1);
+}
+
+.bracket-bl {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: var(--bracket-weight);
+  border-left-width: var(--bracket-weight);
+  --bracket-dx: calc(var(--bracket-run) * -1);
+  --bracket-dy: var(--bracket-run);
+}
+
+.bracket-br {
+  bottom: 0;
+  right: 0;
+  border-bottom-width: var(--bracket-weight);
+  border-right-width: var(--bracket-weight);
+  --bracket-dx: var(--bracket-run);
+  --bracket-dy: var(--bracket-run);
+}
+
+/* ── Varış işareti ────────────────────────────────────────────────────────
+   The timings here are split across two places on purpose and have to stay in
+   step: REVEAL_MS is how long the view takes to fly, REVEAL_MARK_MS is how
+   long this element lives (Workspace.jsx). The percentages below are those two
+   numbers expressed as one timeline — 320ms flying, 200ms held, 300ms letting
+   go, out of 820ms total. */
+.reveal-mark {
+  position: absolute;
+  /* Above every pane. The pane z-counter climbs by one on each selection and
+     never resets, so this has to be a number a long session cannot reach. */
+  z-index: 1000000;
+  pointer-events: none;
+  animation: reveal-mark-life 820ms linear forwards;
+}
+
+.reveal-mark .bracket-corner {
+  /* Cubic-bezier with a tail past 1: the brackets overshoot the corner by a
+     hair and settle back, so they arrive with a click instead of coasting to
+     a stop. Mirrors the curve the view itself travels on. */
+  animation: reveal-corner-in 320ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
+}
+
+@keyframes reveal-corner-in {
+  from {
+    transform: translate(var(--bracket-dx), var(--bracket-dy));
+  }
+  to {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes reveal-mark-life {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  63% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* No flight to watch, so the marks simply state where you landed and go. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-mark .bracket-corner {
+    animation: none;
+    transform: none;
+  }
+
+  .reveal-mark {
+    animation: reveal-mark-life 620ms linear forwards;
+  }
+}
+
+/* A pane's ropes come up to full colour for as long as its mark is on screen.
+   This is where the palette gets to speak: arriving somewhere shows you what
+   that somewhere is tied to, in the hues the ropes already wear. */
+.conn-lit .conn-line {
+  opacity: 1;
+  stroke-width: 2.6;
+}
+
+.conn-lit .conn-head {
+  opacity: 1;
+}
+
+/* Boş sekme. Chromium about:blank'i beyaz boyar; bu katman onu pane'in kendi
+   ekran yüzeyiyle kapatır, böylece yeni bir browser koyu temada parlayan bir
+   dikdörtgenle değil gerçekten boş bir ekranla açılır. */
+.browser-blank {
+  position: absolute;
+  inset: 0;
+  background: var(--pane-screen);
+  pointer-events: none;
+}
+
+/* Adres yokken omnibox'ta duran ipucu. Chrome'un kendi placeholder tonu:
+   şeridin geri kalanı gibi, uygulamanın paletinden değil Chrome'un grisinden. */
+.cr-url-empty {
+  color: var(--cr-dim);
+}
+
+.cr-omnibox-input::placeholder {
+  color: var(--cr-dim);
+}
+
+.dock-selection {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--accent);
+  white-space: nowrap;
 }

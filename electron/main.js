@@ -222,6 +222,48 @@ function setDevDockIcon() {
   app.dock?.setIcon(icon);
 }
 
+// Bir dizinin hangi git dalında olduğunu okur. Kasten `git` çalıştırmıyor:
+// bu, her prompt'ta bir alt süreç doğurmak demekti. .git/HEAD tek satırlık
+// bir dosya ve dalı zaten adıyla yazıyor.
+//
+// `.git` bir dizin yerine dosya olabilir (submodule ve worktree'ler böyle):
+// o durumda içinde gerçek git dizinini gösteren tek bir `gitdir:` satırı olur.
+function gitBranchAt(dir) {
+  let current = dir;
+  for (let depth = 0; depth < 64; depth += 1) {
+    const dotGit = path.join(current, '.git');
+    let stat;
+    try {
+      stat = fs.statSync(dotGit);
+    } catch {
+      stat = null;
+    }
+
+    if (stat) {
+      let gitDir = dotGit;
+      if (stat.isFile()) {
+        const pointer = fs.readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)$/m);
+        if (!pointer) return null;
+        gitDir = path.resolve(current, pointer[1].trim());
+      }
+      let head;
+      try {
+        head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+      } catch {
+        return null;
+      }
+      const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
+      // Detached HEAD'in adı yok; kısa sha okunabilir tek şey.
+      return ref ? ref[1] : head.slice(0, 7) || null;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  return null;
+}
+
 app.whenReady().then(() => {
   setDevDockIcon();
   buildApplicationMenu();
@@ -270,6 +312,17 @@ app.whenReady().then(() => {
       } catch {
         // pty already exited, ignore
       }
+    }
+  });
+
+  // Her prompt'ta bir kez sorulur, çünkü dal cwd değişmeden de değişir
+  // (`git checkout`). Bir dosya okuması olduğu için bunu karşılamak ucuz.
+  ipcMain.handle('git:branch', (event, dir) => {
+    if (typeof dir !== 'string' || !dir.startsWith('/')) return null;
+    try {
+      return gitBranchAt(dir);
+    } catch {
+      return null;
     }
   });
 

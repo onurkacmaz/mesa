@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('terminalApi', {
   input: (id, data) => ipcRenderer.send('terminal:input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
   close: (id) => ipcRenderer.send('terminal:close', { id }),
+  gitBranch: (dir) => ipcRenderer.invoke('git:branch', dir),
   onFullScreenChange: (callback) => {
     const listener = (event, isFullScreen) => callback(isFullScreen);
     ipcRenderer.on('window:fullscreen', listener);
