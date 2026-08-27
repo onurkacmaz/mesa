@@ -8,6 +8,7 @@ import { getTerminalEntry } from './terminalRegistry.js';
 import { getPaneGeom } from './paneGeometry.js';
 import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
 import { SELECTION_COLOR, ropeColor } from './theme.js';
+import { Shortcut } from './shortcuts.jsx';
 
 const CASCADE_STEP = 32;
 
@@ -135,10 +136,6 @@ function nextId(prefix) {
 // Accent indices advance across every session ever opened, so two terminals
 // never land on the same tint back to back.
 let sessionCounter = 0;
-
-function Kbd({ children }) {
-  return <span className="kbd">{children}</span>;
-}
 
 // One workflow: its own canvas, its own terminals, its own view. Every open
 // workflow stays mounted — a workflow you switched away from is usually the
@@ -1284,27 +1281,27 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
         {panes.length === 0 && (
           <div className="empty-hint">
             <p className="empty-hint-lead">
-              Boş çalışma alanı. <Kbd>⌘N</Kbd> ile ilk terminali açın.
+              Empty workspace. Press <Shortcut id="newTerminal" /> to open the first terminal.
             </p>
             <dl className="empty-hint-keys">
-              <dt>Gezinme</dt>
-              <dd>iki parmak kaydırma, ya da boşluk tuşu basılıyken sürükleme</dd>
-              <dt>Yakınlaştırma</dt>
+              <dt>Pan</dt>
               <dd>
-                <Kbd>⌘</Kbd> + kaydırma, <Kbd>⌘0</Kbd> ile sıfırlama, <Kbd>⌘⇧0</Kbd> ile hepsini
-                sığdırma
+                two-finger scroll, or drag with <Shortcut id="space" /> held
               </dd>
-              <dt>Seçim</dt>
-              <dd>boş alanda sürükleyerek seçin</dd>
-              <dt>Taşıma</dt>
-              <dd>terminalleri başlık çubuğundan tutup sürükleyin</dd>
-              <dt>Bağlama</dt>
+              <dt>Zoom</dt>
               <dd>
-                pane kenarındaki kareden tutup başka bir pane&apos;in kenarına sürükleyin
+                hold <Shortcut id="command" /> and scroll; <Shortcut id="zoomReset" /> for actual
+                size, <Shortcut id="zoomFit" /> to fit everything
               </dd>
-              <dt>Bağı düzenleme</dt>
+              <dt>Select</dt>
+              <dd>drag across empty canvas</dd>
+              <dt>Move</dt>
+              <dd>drag a pane by its title bar</dd>
+              <dt>Connect</dt>
+              <dd>drag from the square on a pane&apos;s edge to another pane&apos;s edge</dd>
+              <dt>Edit a link</dt>
               <dd>
-                çizgiye tıklayın; uçlarını tutup taşıyın, <Kbd>⌫</Kbd> ile silin
+                click the line; drag either end to move it, <Shortcut id="removeLink" /> removes it
               </dd>
             </dl>
           </div>
@@ -1315,18 +1312,18 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
             on top, on a rail along the bottom of the workspace. You confirm
             while still looking at exactly what you are confirming. */}
         {pendingClose && (
-          <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Kapatmayı onayla">
+          <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Confirm close">
             <span className="confirm-rail-count">{pendingClose.length}</span>
             <div className="confirm-rail-copy">
-              <strong>terminal kapatılacak</strong>
-              <span>çalışan işlemler sonlandırılır</span>
+              <strong>{pendingClose.length === 1 ? 'pane will close' : 'panes will close'}</strong>
+              <span>anything running in them is terminated</span>
             </div>
             <div className="confirm-rail-actions">
               <button type="button" className="confirm-cancel" onClick={cancelClose}>
-                Vazgeç <Kbd>esc</Kbd>
+                Cancel <Shortcut id="cancel" />
               </button>
               <button type="button" className="confirm-accept" onClick={confirmClose}>
-                Kapat <Kbd>⏎</Kbd>
+                Close <Shortcut id="confirm" />
               </button>
             </div>
           </div>

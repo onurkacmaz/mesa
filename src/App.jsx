@@ -3,6 +3,7 @@ import Workspace from './Workspace.jsx';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
 import { CloseIcon, PlusIcon } from './icons.jsx';
 import { getWorkspaceActions } from './workspaceActions.js';
+import { Shortcut, hint } from './shortcuts.jsx';
 
 // Bare bespoke mark: a prompt chevron + cursor, drawn as paths (no tile
 // behind it). The chevron carries a tight two-stop amber gradient — the
@@ -29,7 +30,7 @@ function BrandMark({ theme }) {
   );
 }
 
-const THEME_LABELS = { auto: 'Oto', light: 'Açık', dark: 'Koyu' };
+const THEME_LABELS = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
 let workflowCounter = 0;
 function makeWorkflow() {
@@ -184,7 +185,7 @@ export default function App() {
           <BrandMark theme={theme} />
         </div>
 
-        <div className="workflow-tabs" role="tablist" aria-label="Workflowlar">
+        <div className="workflow-tabs" role="tablist" aria-label="Workflows">
           {workflows.map((wf) => {
             const isActive = wf.id === activeId;
             return (
@@ -221,7 +222,7 @@ export default function App() {
                       e.stopPropagation();
                       requestCloseWorkflow(wf.id);
                     }}
-                    aria-label={`${wf.name} workflowunu kapat`}
+                    aria-label={`Close ${wf.name}`}
                   >
                     <CloseIcon />
                   </button>
@@ -233,8 +234,8 @@ export default function App() {
           <button
             className="workflow-add"
             onClick={addWorkflow}
-            title="Yeni workflow (⌘T)"
-            aria-label="Yeni workflow"
+            title={hint('newWorkflow')}
+            aria-label={hint('newWorkflow')}
           >
             <PlusIcon />
           </button>
@@ -252,7 +253,7 @@ export default function App() {
             type="button"
             className="titlebar-action"
             onClick={() => getWorkspaceActions(activeId)?.addTerminal('terminal')}
-            title="Yeni terminal (⌘N)"
+            title={hint('newTerminal')}
           >
             <PlusIcon />
             <span>Terminal</span>
@@ -261,14 +262,14 @@ export default function App() {
             type="button"
             className="titlebar-action"
             onClick={() => getWorkspaceActions(activeId)?.addTerminal('browser')}
-            title="Yeni browser (⌘B)"
+            title={hint('newBrowser')}
           >
             <PlusIcon />
             <span>Browser</span>
           </button>
         </div>
 
-        <div className="theme-switch" role="group" aria-label="Tema">
+        <div className="theme-switch" role="group" aria-label="Theme">
           {THEME_MODES.map((mode) => (
             <button
               key={mode}
@@ -300,20 +301,20 @@ export default function App() {
         ))}
 
         {pendingClose && (
-          <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Workflow kapatmayı onayla">
+          <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Confirm close">
             <span className="confirm-rail-count">{paneCounts[pendingClose] ?? 0}</span>
             <div className="confirm-rail-copy">
               <strong>
-                {workflows.find((w) => w.id === pendingClose)?.name} kapatılacak
+                {workflows.find((w) => w.id === pendingClose)?.name} will close
               </strong>
-              <span>içindeki terminaller sonlandırılır</span>
+              <span>anything running inside it is terminated</span>
             </div>
             <div className="confirm-rail-actions">
               <button type="button" className="confirm-cancel" onClick={() => setPendingClose(null)}>
-                Vazgeç <span className="kbd">esc</span>
+                Cancel <Shortcut id="cancel" />
               </button>
               <button type="button" className="confirm-accept" onClick={confirmCloseWorkflow}>
-                Kapat <span className="kbd">⏎</span>
+                Close <Shortcut id="confirm" />
               </button>
             </div>
           </div>

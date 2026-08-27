@@ -96,7 +96,7 @@ function buildApplicationMenu() {
       ...(isMac ? [{ role: 'appMenu' }] : []),
       { role: 'editMenu' },
       {
-        label: 'Görünüm',
+        label: 'View',
         submenu: [
           { role: 'reload' },
           { role: 'toggleDevTools' },
@@ -104,7 +104,7 @@ function buildApplicationMenu() {
           { role: 'togglefullscreen' }
         ]
       },
-      { label: 'Pencere', submenu: [{ role: 'minimize' }, { role: 'zoom' }] }
+      { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }] }
     ])
   );
 }

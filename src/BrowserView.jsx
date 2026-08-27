@@ -18,7 +18,7 @@ export const BROWSER_HOME = 'about:blank';
 // Chromium'un kendi sürümü kullanılıyor.
 // Chrome'un omnibox'ındaki karşılığı "Search Google or type a URL"; burada
 // arama motoru varsayımı yapılmadan aynı işi görüyor.
-const OMNIBOX_HINT = 'Adres girin';
+const OMNIBOX_HINT = 'Enter an address';
 
 const CHROME_UA = navigator.userAgent
   .replace(/\sElectron\/\S+/, '')
@@ -308,8 +308,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
           className="cr-btn"
           disabled={!canBack}
           onClick={() => guest()?.goBack()}
-          title="Geri git"
-          aria-label="Geri git"
+          title="Back"
+          aria-label="Back"
         >
           <IconBack />
         </button>
@@ -318,8 +318,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
           className="cr-btn"
           disabled={!canForward}
           onClick={() => guest()?.goForward()}
-          title="İleri git"
-          aria-label="İleri git"
+          title="Forward"
+          aria-label="Forward"
         >
           <IconForward />
         </button>
@@ -327,8 +327,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
           type="button"
           className="cr-btn"
           onClick={() => (loading ? guest()?.stop() : guest()?.reload())}
-          title={loading ? 'Yüklemeyi durdur' : 'Bu sayfayı yeniden yükle'}
-          aria-label={loading ? 'Yüklemeyi durdur' : 'Bu sayfayı yeniden yükle'}
+          title={loading ? 'Stop loading' : 'Reload this page'}
+          aria-label={loading ? 'Stop loading' : 'Reload this page'}
         >
           {loading ? <IconStop /> : <IconRefresh />}
         </button>
@@ -371,7 +371,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
                 <IconInfo />
               )}
             </span>
-            {parts.insecure && <span className="cr-notsecure">Güvenli değil</span>}
+            {parts.insecure && <span className="cr-notsecure">Not secure</span>}
             {url ? (
               <span className="cr-url">
                 {parts.prefix && !parts.insecure && <span className="cr-url-dim">{parts.prefix}</span>}
@@ -389,8 +389,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
             type="button"
             className={`cr-btn${menuOpen ? ' cr-btn-open' : ''}`}
             onClick={() => setMenuOpen((v) => !v)}
-            title="Özelleştir ve denetle"
-            aria-label="Özelleştir ve denetle"
+            title="Customise and control"
+            aria-label="Customise and control"
             aria-expanded={menuOpen}
           >
             <IconMore />
@@ -399,13 +399,13 @@ export default function BrowserView({ paneId, focused, onStatus }) {
           {menuOpen && (
             <div className="cr-menu" role="menu">
               <div className="cr-menu-zoom">
-                <span className="cr-menu-zoom-label">Yakınlaştır</span>
+                <span className="cr-menu-zoom-label">Zoom</span>
                 <button
                   type="button"
                   className="cr-zoom-btn"
                   onClick={() => applyZoom(-1)}
-                  title="Uzaklaştır"
-                  aria-label="Uzaklaştır"
+                  title="Zoom out"
+                  aria-label="Zoom out"
                 >
                   −
                 </button>
@@ -414,13 +414,13 @@ export default function BrowserView({ paneId, focused, onStatus }) {
                   type="button"
                   className="cr-zoom-btn"
                   onClick={() => applyZoom(1)}
-                  title="Yakınlaştır"
-                  aria-label="Yakınlaştır"
+                  title="Zoom in"
+                  aria-label="Zoom in"
                 >
                   +
                 </button>
                 <button type="button" className="cr-zoom-reset" onClick={() => applyZoom(0)}>
-                  Sıfırla
+                  Reset
                 </button>
               </div>
               <div className="cr-menu-sep" />
@@ -433,7 +433,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
                   setMenuOpen(false);
                 }}
               >
-                Yeniden yükle
+                Reload
               </button>
               <button
                 type="button"
@@ -444,7 +444,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
                   setMenuOpen(false);
                 }}
               >
-                Bağlantıyı kopyala
+                Copy link
               </button>
               <div className="cr-menu-sep" />
               <button
@@ -457,7 +457,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
                   setMenuOpen(false);
                 }}
               >
-                Geliştirici araçları
+                Developer tools
               </button>
             </div>
           )}
@@ -478,12 +478,12 @@ export default function BrowserView({ paneId, focused, onStatus }) {
         {error && (
           <div className="cr-error">
             <PageMark />
-            <p className="cr-error-title">Bu siteye ulaşılamıyor</p>
+            <p className="cr-error-title">This site can’t be reached</p>
             <p className="cr-error-detail">
-              {error.description || 'Bilinmeyen hata'} ({error.code})
+              {error.description || 'Unknown error'} ({error.code})
             </p>
             <button type="button" className="cr-error-retry" onClick={() => navigate(error.url || url)}>
-              Yeniden yükle
+              Reload
             </button>
           </div>
         )}

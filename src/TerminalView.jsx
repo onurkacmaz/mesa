@@ -263,7 +263,7 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
     const disposeData = window.terminalApi.onData(tabId, (data) => term.write(data));
     const disposeExit = window.terminalApi.onExit(tabId, () => {
       report({ exited: true, runningSince: null });
-      term.write('\r\n\x1b[90m[işlem sonlandı]\x1b[0m\r\n');
+      term.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
     });
 
     term.onData((data) => window.terminalApi.input(tabId, data));

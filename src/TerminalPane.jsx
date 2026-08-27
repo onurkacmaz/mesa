@@ -174,7 +174,7 @@ export default function TerminalPane({
   };
 
   const statusNode = status.exited ? (
-    <span className="pane-status pane-status-dim">sonlandı</span>
+    <span className="pane-status pane-status-dim">exited</span>
   ) : runningSince !== null ? (
     <span className="pane-status">{formatElapsed(elapsed)}</span>
   ) : status.lastExit ? (
@@ -291,7 +291,7 @@ export default function TerminalPane({
               setTitleDraft(displayTitle);
               setEditingTitle(true);
             }}
-            title="Yeniden adlandırmak için çift tıklayın"
+            title="Double-click to rename"
           >
             {displayTitle}
           </span>
@@ -308,8 +308,8 @@ export default function TerminalPane({
         <button
           className="pane-close"
           onClick={onClose}
-          title="Kapat"
-          aria-label={isBrowser ? 'Browser panesini kapat' : 'Terminali kapat'}
+          title="Close"
+          aria-label={isBrowser ? 'Close browser pane' : 'Close terminal'}
         >
           <CloseIcon />
         </button>

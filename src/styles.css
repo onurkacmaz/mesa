@@ -38,7 +38,12 @@
   --hover-soft: rgba(255, 255, 255, 0.055);
   --border: rgba(255, 255, 255, 0.1);
   --border-soft: rgba(255, 255, 255, 0.07);
-  --kbd-bg: rgba(0, 0, 0, 0.35);
+  /* A key cap lands on two different surfaces — the canvas behind the empty
+     legend and the confirmation rail's own panel — so the fill is a tint of
+     the light in the room rather than one opaque colour, and separates by the
+     same amount on either. */
+  --kbd-bg: rgba(255, 255, 255, 0.07);
+  --kbd-border: rgba(255, 255, 255, 0.14);
 
   /* Ropes rest in a quiet neutral, not in the accent. theme.js gave up
      per-terminal tints on the grounds that coloured edges "read as status
@@ -91,7 +96,8 @@
   --hover-soft: rgba(30, 27, 24, 0.04);
   --border: rgba(30, 27, 24, 0.15);
   --border-soft: rgba(30, 27, 24, 0.10);
-  --kbd-bg: #ffffff;
+  --kbd-bg: rgba(30, 27, 24, 0.05);
+  --kbd-border: rgba(30, 27, 24, 0.2);
 
   --conn: rgba(30, 27, 24, 0.34);
   --port: rgba(30, 27, 24, 0.36);
@@ -125,14 +131,49 @@ body {
   background: var(--bg-app);
 }
 
+/* A key cap. One combination per cap, contiguously — ⇧⌘0 is one object, not
+   three boxes on an 11.5px line.
+   The box is laid out rather than padded into shape. The rule this replaces
+   set a 1px/5px padding against a 1.5 line-height and no alignment at all, so
+   ⌘0 and esc came out as two differently-proportioned boxes, each sitting at
+   its own height against the text beside it. A fixed height with a min-width
+   makes a one-character cap and a six-character one the same object at two
+   widths, and vertical-align: middle puts the cap's centre on the centre of
+   the surrounding text instead of on its baseline.
+   The type comes from the interface family, not the mono stack: ⌘ ⇧ and the
+   character after them have to be cut by one hand, or the run inside a single
+   cap changes typeface halfway through. */
 .kbd {
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  vertical-align: middle;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
   color: var(--text-dim);
   background: var(--kbd-bg);
-  border: 1px solid var(--border-soft);
-  padding: 1px 5px;
-  line-height: 1.5;
+  border: 1px solid var(--kbd-border);
+}
+
+/* A control does not take the page's type on its own: Chromium hands an
+   unstyled button its own default, which arrives as Arial beside the SF
+   everything else is set in — the theme switch's three words were rendering
+   that way, and so was any key cap sitting inside a button. Individual rules
+   further down already say this one control at a time; saying it once means a
+   new control cannot miss it. Anything that genuinely wants the mono face
+   still names it and still wins. */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 /* Clicking a control should not leave the OS focus ring parked on it — that
@@ -858,7 +899,8 @@ button:focus-visible {
 
 .confirm-accept .kbd {
   color: var(--danger-text);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
 }
 
 /* ── Shell ────────────────────────────────────────────────────────────────

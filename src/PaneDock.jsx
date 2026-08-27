@@ -4,6 +4,7 @@ import { PageMark } from './BrowserView.jsx';
 import Brackets from './Brackets.jsx';
 import { CloseIcon, MinusIcon, PlusIcon } from './icons.jsx';
 import { getPaneTitle, onPaneTitleChange } from './paneTitles.js';
+import { hint } from './shortcuts.jsx';
 
 // The rail along the bottom of a workflow: every pane that is open, in the
 // order it was opened, whatever the canvas is currently showing. The canvas
@@ -106,9 +107,9 @@ export default function PaneDock({
   return (
     <footer className="pane-dock">
       {panes.length === 0 ? (
-        <span className="pane-dock-empty">açık pencere yok</span>
+        <span className="pane-dock-empty">no open panes</span>
       ) : (
-        <div className="pane-dock-list" ref={listRef} aria-label="Açık pencereler">
+        <div className="pane-dock-list" ref={listRef} aria-label="Open panes">
           {cursor && (
             <span
               className={`dock-cursor${focusedId ? ' dock-cursor-on' : ''}${
@@ -182,8 +183,8 @@ export default function PaneDock({
                 <button
                   type="button"
                   className="dock-close"
-                  aria-label={`${label} kapat`}
-                  title="Kapat"
+                  aria-label={`Close ${label}`}
+                  title="Close"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onClose(pane.id)}
                 >
@@ -199,19 +200,31 @@ export default function PaneDock({
 
       {/* Only when a marquee has caught more than one. A single selection is
           already said by the brackets. */}
-      {selectionCount > 1 && <span className="dock-selection">{selectionCount} seçili</span>}
+      {selectionCount > 1 && <span className="dock-selection">{selectionCount} selected</span>}
 
       {/* The view's own controls, at the far end of the rail that carries the
           view's own list. Bare glyphs and a number: no boxed group, because the
           rail already is the box. */}
       <div className="dock-zoom">
-        <button type="button" className="dock-zoom-btn" onClick={onZoomOut} title="Uzaklaştır (⌘−)" aria-label="Uzaklaştır">
+        <button
+          type="button"
+          className="dock-zoom-btn"
+          onClick={onZoomOut}
+          title={hint('zoomOut')}
+          aria-label={hint('zoomOut')}
+        >
           <MinusIcon />
         </button>
-        <button type="button" className="dock-zoom-value" onClick={onZoomReset} title="Sıfırla (⌘0)">
+        <button type="button" className="dock-zoom-value" onClick={onZoomReset} title={hint('zoomReset')}>
           {Math.round(zoom * 100)}%
         </button>
-        <button type="button" className="dock-zoom-btn" onClick={onZoomIn} title="Yakınlaştır (⌘+)" aria-label="Yakınlaştır">
+        <button
+          type="button"
+          className="dock-zoom-btn"
+          onClick={onZoomIn}
+          title={hint('zoomIn')}
+          aria-label={hint('zoomIn')}
+        >
           <PlusIcon />
         </button>
       </div>
