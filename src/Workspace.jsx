@@ -12,13 +12,13 @@ import { Shortcut } from './shortcuts.jsx';
 
 const CASCADE_STEP = 32;
 
-// Terminal de tarayıcı da aynı ölçüde açılır, ve o ölçüyü tarayıcı belirler:
-// guest'in gördüğü viewport panenin CSS boyutudur (tuvalin zoom'u onu yalnızca
-// görsel olarak ölçekler). 780px'te siteler dar pencere düzenine düşüyor —
-// YouTube kenar çubuğunu ~792px'in altında tamamen gizliyor, etiketli tam
-// menüyü ancak ~1313px üstünde açıyor. Masaüstü düzenini tetikleyecek
-// genişlikte açılır; terminal de aynı kutuyu alınca yan yana duran iki pane
-// aynı ızgaraya oturuyor.
+// A terminal and a browser open at the same size, and the browser is what
+// decides that size: the viewport the guest sees is the pane's CSS size (the
+// canvas's zoom only scales it visually). At 780px sites drop into their
+// narrow-window layout — YouTube hides the sidebar entirely below ~792px and
+// only opens the full labelled menu above ~1313px. So panes open wide enough
+// to trigger the desktop layout; giving the terminal the same box means two
+// panes side by side sit on one grid.
 const DEFAULT_SIZE = { width: 1360, height: 780 };
 // Widened along with the pan bound coming out. The old ceiling of 2.5x was
 // tuned against a view you could not freely aim; now that you can put the
@@ -119,7 +119,7 @@ const contentBounds = (panes) => {
 // toward the thing being pointed at. A zoom that does not go where you aim it
 // is not a zoom.
 //
-// The invariant survives without the bound, and always did. ⌘⇧0 frames
+// The invariant survives without the bound, and always did. ⇧⌘0 frames
 // everything open at whatever zoom fits, from anywhere, at any scale — a
 // deliberate way home beats a fence you feel on every gesture. So the view is
 // free now: pan and zoom go exactly where they are aimed.
@@ -1168,8 +1168,8 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
     groupDragRef.current = null;
   }, []);
 
-  // Tuval kaydırılırken ya da seçim dikdörtgeni çizilirken de imleç bir
-  // sayfanın üzerinden geçebilir; aynı sebeple sayfalar o an fareyi görmez.
+  // The cursor can cross a page while the canvas is being panned or a marquee
+  // drawn too, so for the same reason no page sees the mouse during either.
   useEffect(() => {
     const on = isPanning || marqueeRect !== null;
     document.body.classList.toggle('is-canvas-drag', on);

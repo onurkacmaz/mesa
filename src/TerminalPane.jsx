@@ -89,10 +89,10 @@ export default function TerminalPane({
 
   const accent = ACCENT[theme];
 
-  // Bir webview ayrı bir WebContents: imleç üzerine girdiği anda ana belge
-  // mousemove almayı bırakır ve süren jest guest'in üstünde takılı kalır.
-  // İşaret gövdeye konur, panenin kendisine değil — sürüklenen pane başka
-  // bir panenin sayfasının üstünden geçtiğinde de aynı şey oluyor.
+  // A webview is a separate WebContents: the moment the cursor enters it the
+  // host document stops receiving mousemove and the gesture in progress hangs
+  // over the guest. The flag goes on the body, not on the pane itself — the
+  // same thing happens when a dragged pane crosses another pane's page.
   const setManipulating = (on) => {
     document.body.classList.toggle('is-pane-drag', on);
   };
@@ -109,9 +109,9 @@ export default function TerminalPane({
     return () => clearInterval(tick);
   }, [runningSince]);
 
-  // Bir browser panesi, siz ona bir isim verene kadar sayfanın başlığını
-  // taşır — sekmenin adını yazan tarayıcı gibi. Elle adlandırıldığı anda o
-  // isim kilitlenir ve sayfa değiştikçe silinip gitmez.
+  // A browser pane carries the page's title until you give it a name of your
+  // own — the way a browser writes the tab's name. Renaming by hand locks that
+  // name in, so it is not wiped out as the page changes.
   const isBrowser = pane.kind === 'browser';
 
   // A terminal is named after the work in it, not after the order it was
@@ -123,10 +123,11 @@ export default function TerminalPane({
   // Renaming locks it, exactly as it does for a browser pane — once you have
   // given a pane a name, cd'ing must not silently take it away.
   const folder = status.cwd ? folderName(status.cwd) : null;
-  // Bir worktree klasörü neredeyse her zaman dalın adını taşır, ve o durumda
-  // "HR-17123-description-fields -> HR-17123-description-fields" aynı şeyi iki
-  // kez söyleyip rayı da başlık çubuğunu da doldurur. Dal klasörden farklıysa
-  // yeni bir bilgidir ve yazılır; aynıysa zaten yazılmıştır.
+  // A worktree folder almost always carries the branch's name, and in that
+  // case "HR-17123-description-fields -> HR-17123-description-fields" says the
+  // same thing twice and fills both the rail and the title bar. A branch that
+  // differs from the folder is new information and gets written; one that
+  // matches has been said already.
   const sessionName = folder
     ? status.branch && status.branch !== folder
       ? `${folder} -> ${status.branch}`
@@ -248,8 +249,8 @@ export default function TerminalPane({
         {/* The session's identity colour rides on this mark rather than on a
             strip down the edge — a bare glyph, no tile behind it. */}
         {isBrowser ? (
-          // Chrome'un sekmesi gibi: yüklenirken favicon'un yerini dönen işaret
-          // alır, sonra favicon geri gelir.
+          // As on Chrome's tab: the throbber takes the favicon's place while
+          // loading, then the favicon comes back.
           <span className={`pane-icon pane-icon-page${status.loading ? ' pane-icon-busy' : ''}`}>
             {status.loading ? (
               <Throbber />
@@ -258,8 +259,8 @@ export default function TerminalPane({
                 className="pane-favicon"
                 src={status.favicon}
                 alt=""
-                // Favicon 404 verdiğinde kırık resim ikonu bırakmaktansa
-                // küreye düşülür.
+                // When the favicon 404s, fall back to the globe rather than
+                // leave a broken-image icon.
                 onError={() => handleStatus(pane.id, { favicon: null })}
               />
             ) : (
@@ -315,8 +316,8 @@ export default function TerminalPane({
         </button>
       </div>
 
-      {/* Browser panesinde chrome şeridi ekranın üstünde, ekranın içinde
-          değil: sayfa terminalin oturduğu aynı gömme yüzeyi kullanır. */}
+      {/* In a browser pane the chrome strip sits above the screen, not inside
+          it: the page uses the same recessed surface the terminal sits on. */}
       {isBrowser ? (
         <BrowserView paneId={pane.id} focused={focused} onStatus={handleStatus} />
       ) : (

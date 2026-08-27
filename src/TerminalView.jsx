@@ -93,16 +93,17 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true;
 
-      // Shift+Enter. Bir terminal tarihsel olarak Shift+Enter ile Enter'ı
-      // ayırmaz: ikisi de satır başı (CR, \r) gönderir, bu yüzden çok satırlı
-      // girdi okuyan hiçbir yerde alt satıra inilemiyor.
+      // Shift+Enter. A terminal historically does not tell Shift+Enter and
+      // Enter apart: both send a carriage return (CR, \r), which is why there
+      // is nowhere that reads multi-line input where you can drop to the next
+      // line.
       //
-      // Gönderilen dizi ESC+CR, yani Alt+Enter. Ham LF (\n) tercih
-      // edilmedi çünkü zsh onu da satır sonu sayıp komutu çalıştırırdı;
-      // ESC+CR ise iki tarafı birden çözüyor: kabuk isteminde shell hook'u
-      // (electron/shell-hooks/zsh/.zshenv) bu diziyi satır arabelleğine
-      // gerçek bir satır sonu ekleyen bir ZLE widget'ına bağlıyor, TUI'lar
-      // ise onu Alt+Enter olarak okuyor.
+      // The sequence sent is ESC+CR, which is to say Alt+Enter. A raw LF (\n)
+      // was not chosen because zsh counts that as a line ending too and would
+      // run the command; ESC+CR answers both sides at once: at the shell
+      // prompt the shell hook (electron/shell-hooks/zsh/.zshenv) binds this
+      // sequence to a ZLE widget that inserts a real newline into the line
+      // buffer, while TUIs read it as Alt+Enter.
       if (event.key === 'Enter' && event.shiftKey && !event.metaKey && !event.altKey && !event.ctrlKey) {
         event.preventDefault();
         window.terminalApi.input(tabId, '\x1b\r');
@@ -256,7 +257,7 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
 
     window.terminalApi.create(tabId, term.cols, term.rows).then((ok) => {
       if (!ok) {
-        term.write('\r\n\x1b[31mnode-pty yuklenemedi. Bu bir mock terminal.\x1b[0m\r\n');
+        term.write('\r\n\x1b[31mnode-pty failed to load. This is a mock terminal.\x1b[0m\r\n');
       }
     });
 
@@ -282,34 +283,37 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Tuval zoom'u altında fare seçimi ────────────────────────────────────
-  // xterm bir fare konumunu hücreye çevirirken viewport pikseliyle ölçülen
-  // bir farkı (clientX - rect.left) ölçeklenmemiş bir hücre genişliğine
-  // bölüyor: browser/input/Mouse.ts içindeki getCoords. Tuval paneli
-  // transform: scale(s) ile ölçeklediğinde pay s katı büyüyor, payda
-  // büyümüyor — yani her sütun ve satır tam olarak s katı kayıyor ve zoom
-  // %100 değilken seçim bambaşka bir yeri işaretliyor. xterm dönüştürülmüş
-  // bir ata elemanı desteklemiyor ve bunu ayarlayacak bir API'si de yok.
+  // ── Mouse selection under the canvas's zoom ─────────────────────────────
+  // When xterm turns a mouse position into a cell it divides a difference
+  // measured in viewport pixels (clientX - rect.left) by an unscaled cell
+  // width: getCoords in browser/input/Mouse.ts. When the canvas scales the
+  // pane with transform: scale(s) the numerator grows by s and the
+  // denominator does not — so every column and row is off by exactly s, and
+  // at any zoom but 100% the selection marks somewhere else entirely. xterm
+  // does not support a transformed ancestor and has no API to tell it about
+  // one.
   //
-  // Çözüm: olayı yakalama fazında durdurup koordinatı düzeltilmiş bir
-  // kopyasını aynı hedefe göndermek. xterm'in kendi dinleyicileri (mousedown
-  // ekran elemanında, sürükleme boyunca mousemove/mouseup document'te)
-  // kopyayı görüyor ve doğru hücreyi hesaplıyor.
+  // The fix: stop the event in the capture phase and dispatch a
+  // coordinate-corrected copy of it at the same target. xterm's own listeners
+  // (mousedown on the screen element, mousemove/mouseup on the document for
+  // the length of a drag) see the copy and compute the right cell.
   useEffect(() => {
     const onMouse = (e) => {
-      // Kendi gönderdiğimiz kopya: dokunmadan geçsin, yoksa sonsuz döngü.
+      // The copy we dispatched ourselves: let it through untouched, or this
+      // loops forever.
       if (e.zoomCorrected) return;
 
-      // Tuvalin kendi jesti sürerken (kaydırma ya da marquee seçimi) hiç
-      // karışma: o olaylar terminalin değil tuvalin matematiğine ait.
+      // Do not interfere at all while the canvas is running a gesture of its
+      // own (a pan, or a marquee selection): those events belong to the
+      // canvas's arithmetic, not the terminal's.
       //
-      // Aynı şey pane sürükleme/boyutlandırma için de geçerli ve gözden
-      // kaçmıştı: `inside` her olayda `e.target`ten yeniden hesaplanıyor,
-      // yani sürüklenen pane bir BAŞKA terminalin üstünden geçtiği anda o
-      // terminal için `inside` true oluyor ve alttaki `!inside && !dragging`
-      // kapısı açılıyor. Zoom 1 değilken bu, jestin her karesinde o terminale
-      // sentetik mousedown/mousemove göndermek demek — xterm bunları kendi
-      // seçim jesti sanıyor ve metin sürükleme boyunca yanıp sönüyor.
+      // The same holds for dragging or resizing a pane, and that was missed:
+      // `inside` is recomputed from `e.target` on every event, so the moment a
+      // dragged pane crosses ANOTHER terminal, `inside` goes true for that
+      // terminal and the `!inside && !dragging` gate below opens. At any zoom
+      // but 1 that means firing synthetic mousedown/mousemove at that terminal
+      // on every frame of the gesture — xterm takes them for a selection
+      // gesture of its own and the text flickers for the length of the drag.
       if (
         document.body.classList.contains('is-canvas-drag') ||
         document.body.classList.contains('is-pane-drag')
@@ -321,8 +325,8 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
       if (!host) return;
       const inside = host.contains(e.target);
 
-      // Sürükleme terminalin dışına taşabilir — kaydırma çubuğuna kadar
-      // seçmek bunu gerektiriyor. Nerede başladığını hatırlıyoruz.
+      // A drag can run outside the terminal — selecting as far as the
+      // scrollbar requires it. So where it started is remembered.
       if (e.type === 'mousedown') draggingRef.current = inside;
       const dragging = draggingRef.current;
       if (e.type === 'mouseup') draggingRef.current = false;
@@ -331,10 +335,11 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
       const s = scaleRef.current;
       if (!s || s === 1) return;
 
-      // Ölçüm xterm'in kullandığı elemandan alınmalı: koordinatı .xterm-screen'e
-      // göre hesaplıyor, dış kaba göre değil. Aradaki fark .xterm'in kendi
-      // padding'i ve düzeltmeyi tam 16 × (1 − s) piksel kaydırıyordu —
-      // satırın ortasında fark edilmiyor, birinci sütunda bariz.
+      // The measurement has to come off the element xterm itself uses: it
+      // computes the coordinate against .xterm-screen, not the outer
+      // container. The difference is .xterm's own padding, and it was shifting
+      // the correction by exactly 16 × (1 − s) pixels — unnoticeable mid-line,
+      // obvious in the first column.
       const screenEl = host.querySelector('.xterm-screen') || host;
       const rect = screenEl.getBoundingClientRect();
       const corrected = new MouseEvent(e.type, {
@@ -348,8 +353,8 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
         screenY: e.screenY,
         button: e.button,
         buttons: e.buttons,
-        // Çift tıklamayla kelime seçimi buna bakıyor: xterm tıklama sayısını
-        // detail'den okuyor, kopyada da aynı kalmalı.
+        // Double-click word selection depends on this: xterm reads the click
+        // count out of detail, so the copy has to carry it unchanged.
         detail: e.detail,
         ctrlKey: e.ctrlKey,
         shiftKey: e.shiftKey,
@@ -357,17 +362,17 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
         metaKey: e.metaKey
       });
       corrected.zoomCorrected = true;
-      // Yayılım durur ve mousedown'ın varsayılan davranışı da iptal edilir.
+      // Propagation stops, and mousedown's default action is cancelled too.
       //
-      // İkincisi şart: xterm kendi mousedown dinleyicisinde preventDefault
-      // çağırıp odağı yardımcı textarea'sına alıyor, ama o dinleyici artık
-      // yalnızca KOPYAYI görüyor — kopyada çağrılan preventDefault ise
-      // orijinalin varsayılan davranışını iptal etmiyor. Orijinal dispatch'i
-      // bitirdiğinde varsayılan davranış çalışıyor ve mousedown odağı
-      // gövdeye taşıyor, yani xterm odağı aldıktan hemen sonra geri
-      // kaybediyordu. Sonuç: zoom %100 değilken terminale her tıklayışta
-      // imleç sönüyor ve sonraki hiçbir tıklama onu geri getiremiyordu.
-      // Burada iptal etmek, ölçeksiz durumda xterm'in zaten yaptığı şey.
+      // The second part is required: xterm calls preventDefault in its own
+      // mousedown listener and pulls focus into its helper textarea, but that
+      // listener now only ever sees the COPY — and a preventDefault called on
+      // the copy does not cancel the original's default action. When the
+      // original finished dispatching, the default ran and mousedown moved
+      // focus to the body, so xterm lost focus immediately after taking it.
+      // The result: at any zoom but 100%, every click into the terminal put
+      // the cursor out, and no later click could bring it back. Cancelling
+      // here is what xterm already does in the unscaled case.
       if (e.type === 'mousedown') e.preventDefault();
       e.stopImmediatePropagation();
       e.target.dispatchEvent(corrected);

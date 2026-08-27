@@ -1,12 +1,13 @@
 // build/icon.html -> build/icon.png -> build/icon.icns
 //
-// Neden Electron? ImageMagick'in svg delegate'i kurulu olmayan
-// rsvg-convert'e bakıyor, o yoksa kendi iç MSVG motoruna düşüyor — ve o
-// motor gradyanları bozup filtreleri (buradaki tanecik) sessizce atıyor:
-// hata vermez, yanlış bir PNG verir. Electron zaten devDependency, ve
-// Chromium kaynağı tarayıcıdaki haliyle rasterize ediyor.
+// Why Electron? ImageMagick's svg delegate looks for rsvg-convert, which is
+// usually not installed, and without it falls back to its own internal MSVG
+// engine — an engine that mangles gradients and silently drops filters (the
+// grain here): it does not error, it hands back a wrong PNG. Electron is
+// already a devDependency, and Chromium rasterises the source exactly as the
+// browser does.
 //
-// Kullanım: npm run icon
+// Usage: npm run icon
 
 const { app, BrowserWindow } = require('electron');
 const { execFileSync } = require('node:child_process');
@@ -21,8 +22,8 @@ const PNG = path.join(BUILD, 'icon.png');
 
 const SIZE = 1024;
 
-// iconutil bu listenin tamamını ister ve eksiğini tolere etmez: yanlış
-// isimlendirilmiş ya da eksik tek bir giriş tüm dönüşümü düşürür.
+// iconutil wants this list in full and tolerates nothing missing: one
+// misnamed or absent entry drops the whole conversion.
 const ICONSET_ENTRIES = [
   ['icon_16x16.png', 16],
   ['icon_16x16@2x.png', 32],
@@ -44,20 +45,20 @@ async function render() {
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
-    // 1024 nokta çoğu dizüstü ekranından yüksek. Bu bayrak olmadan pencere
-    // ekrana sığdırılır ve kare olmayan bir kare yakalanır.
+    // 1024 points is taller than most laptop screens. Without this flag the
+    // window is fitted to the screen and the capture comes back non-square.
     enableLargerThanScreen: true,
     useContentSize: true,
     webPreferences: { offscreen: false }
   });
 
-  // Kaynaktaki bir sözdizimi hatası script'i tamamen öldürür ve sayfa yine de
-  // "başarıyla" yüklenir: geriye boş bir squircle kalır ve boruhattı bunu
-  // geçerli bir ikon sanarak sonuna kadar götürür. Bu sessiz başarısızlık bir
-  // kez yaşandı; konsol artık dinleniyor.
+  // A syntax error in the source kills the script outright and the page still
+  // loads "successfully": what is left is an empty squircle, and the pipeline
+  // carries it all the way through believing it is a valid icon. That silent
+  // failure happened once; the console is listened to now.
   const consoleErrors = [];
-  // Yalnızca gerçek hatalar (seviye 3). Electron'un kendi güvenlik uyarıları
-  // paketlenmemiş çalıştırmada her zaman düşer ve bizi ilgilendirmez.
+  // Real errors only (level 3). Electron's own security warnings always land
+  // in an unpackaged run and are none of our business.
   win.webContents.on('console-message', (_e, level, message) => {
     if (level >= 3 && !message.includes('Electron Security Warning')) {
       consoleErrors.push(message);
@@ -66,8 +67,8 @@ async function render() {
 
   await win.loadFile(SOURCE);
 
-  // Sayfa SVG'yi yükleme anında script ile kuruyor. did-finish-load
-  // boyamanın bittiğini garanti etmez; bir kare bekle.
+  // The page builds the SVG with script at load time. did-finish-load does not
+  // guarantee the paint is done, so wait a frame.
   await win.webContents.executeJavaScript(
     'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))'
   );
@@ -77,11 +78,11 @@ async function render() {
   );
   if (consoleErrors.length) {
     win.destroy();
-    throw new Error(`icon.html konsol hatası verdi:\n  ${consoleErrors.join('\n  ')}`);
+    throw new Error(`icon.html reported console errors:\n  ${consoleErrors.join('\n  ')}`);
   }
   if (!drawn) {
     win.destroy();
-    throw new Error('icon.html hiçbir şey çizmedi — script çalışmamış.');
+    throw new Error('icon.html drew nothing — the script did not run.');
   }
 
   let image = await win.webContents.capturePage();
@@ -89,11 +90,11 @@ async function render() {
 
   const { width, height } = image.getSize();
   if (width === 0 || height === 0) {
-    throw new Error('capturePage boş döndü — pencere hiç boyanmamış.');
+    throw new Error('capturePage came back empty — the window never painted.');
   }
 
-  // Retina'da yakalama 2048 gelir. Küçültmek zaten istediğimiz şey: 1024'e
-  // indirilen 2048 kenarları temizler.
+  // On Retina the capture arrives at 2048. Scaling down is what we want
+  // anyway: 2048 brought to 1024 cleans up the edges.
   if (width !== SIZE || height !== SIZE) {
     image = image.resize({ width: SIZE, height: SIZE, quality: 'best' });
   }
@@ -128,7 +129,7 @@ app.whenReady().then(async () => {
   try {
     const kb = (n) => `${(fs.statSync(n).size / 1024).toFixed(0)} KB`;
     const { captured } = await render();
-    console.log(`yakalanan: ${captured}`);
+    console.log(`captured: ${captured}`);
     console.log(`build/icon.png  ${kb(PNG)}`);
     buildIcns();
     console.log(`build/icon.icns ${kb(ICNS)}`);

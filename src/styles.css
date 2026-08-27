@@ -656,8 +656,8 @@ button:focus-visible {
   color: var(--text-strong);
 }
 
-/* Bir browser panesinde başlık satırını dolduracak bir cwd yok: sayfanın
-   adı boş alanın yanında kırpılmak yerine o alanı alır. */
+/* A browser pane has no cwd to fill the rest of the title row, so the page's
+   name takes that room instead of being clipped beside empty space. */
 .pane-browser .pane-title {
   flex: 1 1 auto;
   max-width: none;
@@ -1130,12 +1130,12 @@ button:focus-visible {
   padding-left: 14px;
 }
 
-/* ── Browser chrome: birebir Chromium ─────────────────────────────────────
-   Bu şerit uygulamanın kare dilinin dışındadır ve bilerek öyledir: istenen
-   şey Chrome'un kendisi — hap biçimli omnibox, dairesel hover hedefleri,
-   Material ikonlar, Chrome'un gri paleti, sekmedeki dönen yükleme işareti.
-   Tüm renkler kendi token setinde durur, böylece uygulamanın geri kalanına
-   tek bir değer sızmaz. */
+/* ── Browser chrome: Chromium, exactly ────────────────────────────────────
+   This strip sits outside the app's square language, and does so on purpose:
+   what is wanted here is Chrome itself — the pill omnibox, circular hover
+   targets, Material icons, Chrome's own greys, the throbber on the tab. Every
+   colour stays in its own token set, so not one value leaks into the rest of
+   the app. */
 :root {
   --cr-toolbar: #2f2f2f;
   --cr-omnibox: #3d3d3d;
@@ -1182,7 +1182,8 @@ button:focus-visible {
 
 .cr-toolbar {
   position: relative;
-  /* Menü sayfanın üstüne düşüyor: şerit kendi yığın bağlamını alıyor. */
+  /* The menu has to fall over the page, so the strip takes its own stacking
+     context. */
   z-index: 2;
   display: flex;
   align-items: center;
@@ -1230,9 +1231,9 @@ button:focus-visible {
   outline-offset: 0;
 }
 
-/* Omnibox. Dinlenirken bir düğme, yazarken bir input: bir input'un metninin
-   parçalarını boyayamazsınız ve Chrome'un host'u koyu, yolu soluk gösteren
-   davranışı tam olarak bunu gerektiriyor. */
+/* Omnibox. A button at rest, an input while typing: you cannot colour parts
+   of an input's text, and Chrome's behaviour — host dark, path faded — needs
+   exactly that. */
 .cr-omnibox {
   appearance: none;
   display: flex;
@@ -1319,8 +1320,8 @@ button:focus-visible {
   color: var(--cr-dim);
 }
 
-/* ⋮ menüsü. Chrome'un menüsü gibi görünüyor ve gerçekten çalışıyor: ölü bir
-   kontrol koymaktansa yaptığı iş gerçek olan bir menü. */
+/* The ⋮ menu. It looks like Chrome's and it actually works: a menu whose
+   entries do real work, rather than a dead control put there for the look. */
 .cr-menu-anchor {
   position: relative;
   flex: 0 0 auto;
@@ -1418,7 +1419,7 @@ button:focus-visible {
   cursor: pointer;
 }
 
-/* Chrome'un sekmesindeki throbber, pane başlığındaki favicon'un yerinde. */
+/* Chrome's tab throbber, standing where the favicon sits in the pane title. */
 .cr-throbber {
   color: var(--cr-focus);
   animation: cr-spin 1000ms linear infinite;
@@ -1437,22 +1438,23 @@ button:focus-visible {
   }
 }
 
-/* Sayfa Chrome'da gömme bir yüzeyde durmaz: terminalin iç gölgesi burada
-   kapatılır, ayırıcı Chrome'un ince çizgisidir. */
+/* A page does not sit on a recessed surface in Chrome: the terminal's inner
+   shadow is switched off here, and the divider is Chrome's own hairline. */
 .browser-screen {
-  /* Ekran bir flex kabı, çünkü webview boyutunu normal akıştan almak
-     zorunda. Mutlak konumlanmış bir webview'da guest, elemanın son
-     ölçüsünü göremeden ekleniyor ve sayfa küçük bir viewport'a göre
-     kuruluyordu: altta ölü bant, ve YouTube gibi düzenini JS ile kuran
-     sitelerde bozuk bir üst çubuk. */
+  /* The screen is a flex container because the webview has to take its size
+     from normal flow. With the webview absolutely positioned, the guest was
+     attached before it could see the element's final measurement and built
+     the page against a tiny viewport: a dead band along the bottom, and a
+     broken top bar on sites like YouTube that lay themselves out in JS. */
   display: flex;
   box-shadow: none;
   border-top: 1px solid var(--cr-sep);
   background: var(--cr-page);
 }
 
-/* Electron'un dokümanı bu konuda net: webview'ın varsayılan display:flex'i
-   ezilmemeli — içindeki iframe kabı tam olarak bununla dolduruyor. */
+/* Electron's documentation is explicit here: the webview's default
+   display:flex must not be overridden — the iframe container inside it fills
+   using exactly that. */
 .browser-webview {
   display: flex;
   flex: 1 1 auto;
@@ -1462,10 +1464,10 @@ button:focus-visible {
   background: var(--cr-page);
 }
 
-/* Süren bir jest boyunca hiçbir sayfa fareyi görmez: guest'in üzerine giren
-   imleç aksi hâlde mousemove akışını kesiyor ve sürükleme ortada kalıyor.
-   İşaret gövdede, çünkü sürüklenen pane başkasının sayfasının üstünden de
-   geçebiliyor. */
+/* No page sees the mouse for the length of a gesture: a cursor crossing onto
+   the guest otherwise cuts the mousemove stream and strands the drag halfway.
+   The flag goes on the body, because a pane being dragged can pass over
+   someone else's page too. */
 .is-pane-drag .browser-webview,
 .is-canvas-drag .browser-webview {
   pointer-events: none;
@@ -1477,7 +1479,7 @@ button:focus-visible {
   z-index: 1;
 }
 
-/* Chrome'un net::ERR sayfasının kılığı. */
+/* Dressed as Chrome's own net::ERR page. */
 .cr-error {
   position: absolute;
   inset: 0;
@@ -1529,7 +1531,7 @@ button:focus-visible {
   filter: brightness(1.08);
 }
 
-/* Favicon yüzeye çıplak oturur — arkasında kutu yok. */
+/* The favicon sits bare on the surface — no box behind it. */
 .pane-icon-page {
   color: var(--text-faint);
   opacity: 0.7;
@@ -1539,7 +1541,7 @@ button:focus-visible {
   color: var(--text-mid);
 }
 
-/* Dönen işaret sönük durmaz: yükleme sekmede okunması gereken bir durumdur. */
+/* The throbber is not dimmed: loading is a state the tab has to report. */
 .pane-icon-busy {
   opacity: 1;
 }
@@ -1871,7 +1873,7 @@ button:focus-visible {
   }
 }
 
-/* ── Köşe braketleri ─────────────────────────────────────────────────────
+/* ── Corner brackets ─────────────────────────────────────────────────────
    One bespoke shape, two uses: around the pane the view has just flown to, and
    around the name of the current pane down on the rail. Arm length, weight and
    run-in distance all arrive as custom properties. */
@@ -1925,7 +1927,7 @@ button:focus-visible {
   --bracket-dy: var(--bracket-run);
 }
 
-/* ── Varış işareti ────────────────────────────────────────────────────────
+/* ── Arrival mark ─────────────────────────────────────────────────────────
    The timings here are split across two places on purpose and have to stay in
    step: REVEAL_MS is how long the view takes to fly, REVEAL_MARK_MS is how
    long this element lives (Workspace.jsx). The percentages below are those two
@@ -1995,9 +1997,9 @@ button:focus-visible {
   opacity: 1;
 }
 
-/* Boş sekme. Chromium about:blank'i beyaz boyar; bu katman onu pane'in kendi
-   ekran yüzeyiyle kapatır, böylece yeni bir browser koyu temada parlayan bir
-   dikdörtgenle değil gerçekten boş bir ekranla açılır. */
+/* The empty tab. Chromium paints about:blank white; this layer covers it with
+   the pane's own screen surface, so a new browser opens on a genuinely blank
+   screen rather than a rectangle glaring out of the dark theme. */
 .browser-blank {
   position: absolute;
   inset: 0;
@@ -2005,8 +2007,9 @@ button:focus-visible {
   pointer-events: none;
 }
 
-/* Adres yokken omnibox'ta duran ipucu. Chrome'un kendi placeholder tonu:
-   şeridin geri kalanı gibi, uygulamanın paletinden değil Chrome'un grisinden. */
+/* The hint the omnibox holds when there is no address. Chrome's own
+   placeholder tone: like the rest of the strip, out of Chrome's greys rather
+   than the app's palette. */
 .cr-url-empty {
   color: var(--cr-dim);
 }

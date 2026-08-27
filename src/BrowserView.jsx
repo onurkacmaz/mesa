@@ -1,33 +1,35 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-// Bir browser panesinin tamamı: Chromium'un araç çubuğu + sayfanın oturduğu
-// ekran. Bu şerit bilinçli olarak uygulamanın kendi kare dilinin dışındadır:
-// Chrome neyse o — hap biçimli omnibox, dairesel hover hedefleri, Material
-// ikonlar, Chrome'un gri paleti ve sekmedeki dönen yükleme işareti.
+// A browser pane, whole: Chromium's toolbar plus the screen the page sits on.
+// This strip is deliberately outside the app's own square language — it is
+// whatever Chrome is: the pill omnibox, circular hover targets, Material
+// icons, Chrome's greys, and the throbber on the tab.
 
-// Yeni bir pane boş açılır. Guest gerçekten about:blank'te duruyor; adres
-// çubuğunda "about:blank" yazmaz ve ekranı beyaz bir dikdörtgen kaplamaz —
-// ikisi de aşağıda boş adres (url === '') durumuyla karşılanıyor.
+// A new pane opens empty. The guest really is parked on about:blank; what it
+// must not do is write "about:blank" in the address bar or cover the screen
+// with a white rectangle — both are answered below by the empty-address
+// (url === '') case.
 export const BROWSER_HOME = 'about:blank';
 
-// Electron, varsayılan User-Agent'ın sonuna uygulamanın adını ve
-// "Electron/32.x" jetonunu ekler. Bazı siteler — YouTube en bilineni — UA'yı
-// tanımadığında sayfayı bozuk bir yoldan kurar: metin ve resimler gelir ama
-// ikon bileşenleri boş kalır. Buradaki tek iş o iki jetonu düşürüp geriye
-// kalan gerçek Chrome dizesini guest'e vermek; sürüm sabitlenmiyor, çalışan
-// Chromium'un kendi sürümü kullanılıyor.
-// Chrome'un omnibox'ındaki karşılığı "Search Google or type a URL"; burada
-// arama motoru varsayımı yapılmadan aynı işi görüyor.
+// Chrome's own line here is "Search Google or type a URL"; this does the same
+// job without assuming a search engine.
 const OMNIBOX_HINT = 'Enter an address';
 
+// Electron appends the app's name and an "Electron/32.x" token to the end of
+// the default User-Agent. Some sites — YouTube is the best known — build the
+// page down a broken path when they do not recognise the UA: text and images
+// arrive but the icon components stay empty. All this does is drop those two
+// tokens and hand the guest the genuine Chrome string that is left; the
+// version is not pinned, it is whatever the running Chromium reports.
 const CHROME_UA = navigator.userAgent
   .replace(/\sElectron\/\S+/, '')
   .replace(/\s\S+\/\S+(?=\sChrome\/)/, '');
 
-// Chrome'un kendi yakınlaştırma basamakları.
+// Chrome's own zoom steps.
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
 
-// Omnibox bir arama kutusu da: nokta içermeyen bir girdi host değil, sorgudur.
+// The omnibox is a search box too: an entry with no dot in it is a query,
+// not a host.
 function normalizeInput(raw) {
   const s = raw.trim();
   if (!s) return null;
@@ -39,9 +41,9 @@ function normalizeInput(raw) {
   return `https://${s}`;
 }
 
-// Chrome gibi: https gizlenir, host tam tonda okunur, yolun geri kalanı söner.
-// Bir input'un metninin parçalarını boyayamazsınız — bu yüzden dinlenme hâli
-// bir düğme, yazma hâli bir input.
+// As Chrome does it: https is hidden, the host reads at full strength, the
+// rest of the path dims. You cannot colour parts of an input's text — which is
+// why the resting state is a button and the typing state an input.
 function splitUrl(url) {
   try {
     const u = new URL(url);
@@ -57,10 +59,10 @@ function splitUrl(url) {
   }
 }
 
-/* ── İkonlar ───────────────────────────────────────────────────────────────
-   Chrome'un kullandığı Material glifleri, 24'lük ızgarada dolu yollar olarak,
-   16px'e indirilmiş. Uygulamanın geri kalanındaki çizili kare ikonlar burada
-   geçerli değil: bu şerit birebir Chromium olsun diye isteniyor. */
+/* ── Icons ────────────────────────────────────────────────────────────────
+   The Material glyphs Chrome uses, as filled paths on a 24 grid, brought down
+   to 16px. The stroked square icons the rest of the app uses do not apply
+   here: this strip is meant to be Chromium, exactly. */
 const icon = (path) => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <path d={path} />
@@ -98,7 +100,7 @@ const IconSearch = () => (
   </svg>
 );
 
-// Faviconu olmayan sayfa için Chrome'un koyduğu şey bir küre.
+// What Chrome puts up for a page with no favicon is a globe.
 export function PageMark() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -107,9 +109,9 @@ export function PageMark() {
   );
 }
 
-// Chrome'un sekmesindeki dönen yükleme işareti: sayfa yüklenirken favicon'un
-// yerini alır. Hareketi hak ediyor, çünkü gerçekten değişen bir durumu
-// gösteriyor — ve azaltılmış hareket tercihinde dönmeden, sabit durur.
+// The throbber on Chrome's tab: it takes the favicon's place while the page
+// loads. It earns its motion because it reports a state that genuinely
+// changes — and under reduced-motion it holds still instead of spinning.
 export function Throbber() {
   return (
     <svg className="cr-throbber" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -130,13 +132,13 @@ export default function BrowserView({ paneId, focused, onStatus }) {
   const inputRef = useRef(null);
   const menuRef = useRef(null);
 
-  // Boş adres, boş sayfa. about:blank bir adres değil bir yokluk, o yüzden
-  // durumda da öyle tutuluyor: adres çubuğu placeholder'ını gösterir, ekranı
-  // uygulamanın kendi yüzeyi kaplar.
+  // Empty address, empty page. about:blank is an absence rather than an
+  // address, so it is held that way in state too: the address bar shows its
+  // placeholder and the app's own surface covers the screen.
   const [url, setUrl] = useState('');
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
-  // about:blank'in yüklenecek bir şeyi yok: dönen işaretle açılmaz.
+  // about:blank has nothing to load, so it does not open on a throbber.
   const [loading, setLoading] = useState(false);
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
@@ -144,7 +146,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
 
-  // webview metotları dom-ready'den önce fırlatır; her çağrı bu kapıdan geçer.
+  // webview methods throw before dom-ready, so every call goes through this
+  // gate.
   const guest = () => (readyRef.current ? hostRef.current : null);
 
   const syncNav = useCallback(() => {
@@ -154,8 +157,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
       setCanBack(w.canGoBack());
       setCanForward(w.canGoForward());
     } catch {
-      // Guest yeniden bağlanırken kısa bir an sorulamaz olur; bir sonraki
-      // navigasyon olayı zaten tekrar soracak.
+      // The guest is briefly unqueryable while it reattaches; the next
+      // navigation event will ask again anyway.
     }
   }, []);
 
@@ -193,14 +196,14 @@ export default function BrowserView({ paneId, focused, onStatus }) {
       }
       syncNav();
     };
-    // Boş sayfanın başlığı yoktur; Chromium'un koyduğu "about:blank" bir ad
-    // değil, pane'in başlık çubuğunda da öyle durmamalı.
+    // A blank page has no title; the "about:blank" Chromium supplies is not a
+    // name, and must not stand as one in the pane's title bar.
     const onTitle = (e) =>
       onStatus?.(paneId, { pageTitle: e.title && e.title !== BROWSER_HOME ? e.title : null });
     const onFavicon = (e) => onStatus?.(paneId, { favicon: e.favicons?.[0] ?? null });
     const onFail = (e) => {
-      // -3 (ABORTED) sıradan bir iptaldir: bir yükleme biterken yeni bir
-      // adrese gidilmiştir. Hata ekranı göstermek yanlış olurdu.
+      // -3 (ABORTED) is an ordinary cancellation: a new address was entered
+      // while a load was finishing. Showing an error screen would be wrong.
       if (!e.isMainFrame || e.errorCode === -3) return;
       setError({ code: e.errorCode, description: e.errorDescription, url: e.validatedURL });
       setLoading(false);
@@ -226,8 +229,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
     };
   }, [paneId, onStatus, syncNav]);
 
-  // Sekmedeki throbber pane başlığında yaşıyor, o yüzden yükleme durumu
-  // yukarı bildiriliyor.
+  // The tab's throbber lives in the pane title, so the loading state is
+  // reported upward.
   useEffect(() => {
     onStatus?.(paneId, { loading });
   }, [loading, paneId, onStatus]);
@@ -238,8 +241,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
     if (!next || !w) return;
     setEditing(false);
     w.loadURL(next).catch(() => {
-      // Yükleme hatası zaten did-fail-load'dan geliyor; burada yutmak
-      // yakalanmamış bir promise reddi bırakmamak içindir.
+      // A load failure already arrives via did-fail-load; swallowing it here
+      // is only so no unhandled promise rejection is left behind.
     });
   }, []);
 
@@ -256,8 +259,9 @@ export default function BrowserView({ paneId, focused, onStatus }) {
     el.select();
   }, [editing]);
 
-  // ⌘L omnibox'a gider. Odak sayfanın içindeyken tuşlar ayrı bir WebContents'e
-  // gider ve buraya hiç ulaşmaz — bu kısayol pane chrome'u odaktayken çalışır.
+  // ⌘L goes to the omnibox. With focus inside the page, keys go to a separate
+  // WebContents and never reach here — this shortcut works while the pane's
+  // chrome holds focus.
   useEffect(() => {
     if (!focused) return undefined;
     const onKey = (e) => {
@@ -270,7 +274,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [focused, beginEditing]);
 
-  // Menü dışarı tıklamayla ve Escape ile kapanır — Chrome'un yaptığı gibi.
+  // The menu closes on an outside click and on Escape — as Chrome's does.
   useEffect(() => {
     if (!menuOpen) return undefined;
     const onDown = (e) => {
@@ -348,7 +352,8 @@ export default function BrowserView({ paneId, focused, onStatus }) {
               onChange={(e) => setDraft(e.target.value)}
               onBlur={() => setEditing(false)}
               onKeyDown={(e) => {
-                // Tuşlar tuvale sızmamalı: ⌘B burada yeni bir pane açamaz.
+                // Keys must not leak to the canvas: ⌘B cannot open a new
+                // pane from in here.
                 e.stopPropagation();
                 if (e.key === 'Enter') navigate(draft);
                 if (e.key === 'Escape') {
@@ -466,14 +471,15 @@ export default function BrowserView({ paneId, focused, onStatus }) {
 
       <div className="pane-screen browser-screen">
         <webview ref={hostRef} src={BROWSER_HOME} useragent={CHROME_UA} className="browser-webview" />
-        {/* about:blank Chromium'da beyaz boyanır ve koyu temada pane'in içinde
-            parlayan bir dikdörtgen bırakır. Boş sayfa uygulamanın kendi ekran
-            yüzeyiyle kaplanıyor: gerçekten boş, ve doğru renkte. İlk adrese
-            gidildiği anda kalkar. */}
+        {/* Chromium paints about:blank white, which leaves a rectangle glaring
+            inside the pane in the dark theme. The blank page is covered with
+            the app's own screen surface: genuinely empty, and the right
+            colour. It lifts the moment the first address is opened. */}
         {!url && !error && <div className="browser-blank" />}
-        {/* Menü açıkken sayfaya yapılan tıklama host belgesine hiç ulaşmaz —
-            guest ayrı bir WebContents. Sayfanın üzerindeki bu şeffaf katman
-            o tıklamayı yakalar ve menüyü Chrome'daki gibi kapatır. */}
+        {/* With the menu open, a click on the page never reaches the host
+            document — the guest is a separate WebContents. This transparent
+            layer over the page catches that click and closes the menu the way
+            Chrome does. */}
         {menuOpen && <div className="cr-scrim" onMouseDown={() => setMenuOpen(false)} />}
         {error && (
           <div className="cr-error">

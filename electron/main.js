@@ -27,7 +27,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true // browser pane'leri icin
+      webviewTag: true // for browser panes
     }
   });
 
@@ -42,10 +42,11 @@ function createWindow() {
     webPreferences.contextIsolation = true;
   });
 
-  // target="_blank" bir guest'te varsayilan olarak yeni bir pencere acar, ve
-  // bu uygulamada acilacak pencere yok: baglanti oldu sayilirdi. Ayni pane'de
-  // acilir, cunku tuvalin kendisi zaten sekme modeli. http(s) disindaki
-  // semalar (mailto:, custom protocol) sessizce reddedilir.
+  // target="_blank" in a guest opens a new window by default, and there is no
+  // window for this app to open: the link would simply count as dead. It opens
+  // in the same pane instead, because the canvas is already the tab model.
+  // Schemes other than http(s) (mailto:, a custom protocol) are refused
+  // silently.
   win.webContents.on('did-attach-webview', (event, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) {
@@ -212,9 +213,9 @@ function killTerminal(term) {
   }, 400);
 }
 
-// macOS'ta BrowserWindow'un `icon` seçeneği yok sayılır, ve paketlenmemiş
-// çalıştırmada Dock jenerik Electron ikonunu gösterir. Paketlenmiş uygulama
-// ikonunu kendi bundle'ından alır; burası yalnızca `npm run dev` içindir.
+// On macOS BrowserWindow's `icon` option is ignored, and an unpackaged run
+// shows the generic Electron icon in the Dock. A packaged app takes its icon
+// from its own bundle; this is only for `npm run dev`.
 function setDevDockIcon() {
   if (process.platform !== 'darwin' || app.isPackaged) return;
   const icon = path.join(__dirname, '..', 'build', 'icon.png');
@@ -222,12 +223,13 @@ function setDevDockIcon() {
   app.dock?.setIcon(icon);
 }
 
-// Bir dizinin hangi git dalında olduğunu okur. Kasten `git` çalıştırmıyor:
-// bu, her prompt'ta bir alt süreç doğurmak demekti. .git/HEAD tek satırlık
-// bir dosya ve dalı zaten adıyla yazıyor.
+// Reads which git branch a directory is on. Deliberately does not run `git`:
+// that would mean spawning a child process on every prompt. .git/HEAD is a
+// one-line file and already names the branch.
 //
-// `.git` bir dizin yerine dosya olabilir (submodule ve worktree'ler böyle):
-// o durumda içinde gerçek git dizinini gösteren tek bir `gitdir:` satırı olur.
+// `.git` can be a file rather than a directory (that is how submodules and
+// worktrees work): in that case it holds a single `gitdir:` line pointing at
+// the real git directory.
 function gitBranchAt(dir) {
   let current = dir;
   for (let depth = 0; depth < 64; depth += 1) {
@@ -253,7 +255,8 @@ function gitBranchAt(dir) {
         return null;
       }
       const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
-      // Detached HEAD'in adı yok; kısa sha okunabilir tek şey.
+      // A detached HEAD has no name; the short sha is the only readable
+      // thing.
       return ref ? ref[1] : head.slice(0, 7) || null;
     }
 
@@ -315,8 +318,8 @@ app.whenReady().then(() => {
     }
   });
 
-  // Her prompt'ta bir kez sorulur, çünkü dal cwd değişmeden de değişir
-  // (`git checkout`). Bir dosya okuması olduğu için bunu karşılamak ucuz.
+  // Asked once per prompt, because the branch changes without the cwd
+  // changing (`git checkout`). Being a file read, answering it is cheap.
   ipcMain.handle('git:branch', (event, dir) => {
     if (typeof dir !== 'string' || !dir.startsWith('/')) return null;
     try {

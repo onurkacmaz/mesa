@@ -14,7 +14,7 @@ const MAP_PAD = 10;
 // looking — not just the panes. That is the difference between a decoration
 // and a way home: wander off into empty canvas and the map zooms out to hold
 // both, so you can see the work sitting off to one side and drag straight back
-// to it. ⌘⇧0 does the same job in one keystroke; this is the version you can
+// to it. ⇧⌘0 does the same job in one keystroke; this is the version you can
 // aim.
 function fitProjection(panes, view) {
   let minX = view.x;

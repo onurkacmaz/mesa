@@ -64,12 +64,12 @@ __wfterm_setup_prompt() {
   RPROMPT='%F{8}%*%f'
 }
 
-# Shift+Enter, alt satira inmek icin. Terminal ESC+CR gonderiyor (bkz.
-# src/TerminalView.jsx): zsh'in kendisinde boyle bir tus yok, cunku bir
-# terminal Shift+Enter ile Enter'i ayirmaz. Bu widget satir arabelleginin
-# imlecinden once gercek bir satir sonu birakiyor, boylece komut calismadan
-# ikinci satira gecilebiliyor. Ham LF ise ise yaramazdi: zsh onu da satir
-# sonu sayip komutu calistirirdi.
+# Shift+Enter, for dropping to the next line. The terminal sends ESC+CR (see
+# src/TerminalView.jsx): zsh has no such key of its own, because a terminal
+# does not tell Shift+Enter and Enter apart. This widget leaves a real newline
+# before the line buffer's cursor, so a second line can be started without the
+# command running. A raw LF would not have worked: zsh counts that as a line
+# ending too and would run the command.
 __wfterm_insert_newline() {
   LBUFFER+=$'\n'
 }
