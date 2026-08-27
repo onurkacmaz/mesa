@@ -4,7 +4,7 @@ import { PageMark } from './BrowserView.jsx';
 import Brackets from './Brackets.jsx';
 import { CloseIcon, MinusIcon, PlusIcon } from './icons.jsx';
 import { getPaneTitle, onPaneTitleChange } from './paneTitles.js';
-import { hint } from './shortcuts.jsx';
+import { hint, label as shortcutLabel } from './shortcuts.jsx';
 
 // The rail along the bottom of a workflow: every pane that is open, in the
 // order it was opened, whatever the canvas is currently showing. The canvas
@@ -211,7 +211,7 @@ export default function PaneDock({
           className="dock-zoom-btn"
           onClick={onZoomOut}
           title={hint('zoomOut')}
-          aria-label={hint('zoomOut')}
+          aria-label={shortcutLabel('zoomOut')}
         >
           <MinusIcon />
         </button>
@@ -223,7 +223,7 @@ export default function PaneDock({
           className="dock-zoom-btn"
           onClick={onZoomIn}
           title={hint('zoomIn')}
-          aria-label={hint('zoomIn')}
+          aria-label={shortcutLabel('zoomIn')}
         >
           <PlusIcon />
         </button>

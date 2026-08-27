@@ -48,11 +48,19 @@ export function Shortcut({ id }) {
   return <kbd className="kbd">{spec.keys}</kbd>;
 }
 
-// For `title` and `aria-label`, which are OS-rendered plain text: "New
-// terminal (⌘N)". Nothing here can be styled, so the only thing worth
-// getting right is that the words and the keys match what the page shows.
+// For `title`, which is OS-rendered plain text: "New terminal (⌘N)". Nothing
+// here can be styled, so the only thing worth getting right is that the words
+// and the keys match what the page shows.
 export function hint(id) {
   const spec = SHORTCUTS[id];
   if (!spec) return '';
   return spec.keys ? `${spec.label} (${spec.keys})` : spec.label;
+}
+
+// For `aria-label`, which is the accessible name and deliberately does NOT get
+// the keys: a screen reader reads ⌘ and − as punctuation or skips them, so
+// appending the combination makes the name worse rather than more helpful. The
+// shortcut belongs in `title` alone.
+export function label(id) {
+  return SHORTCUTS[id]?.label ?? '';
 }

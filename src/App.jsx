@@ -3,7 +3,7 @@ import Workspace from './Workspace.jsx';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
 import { CloseIcon, PlusIcon } from './icons.jsx';
 import { getWorkspaceActions } from './workspaceActions.js';
-import { Shortcut, hint } from './shortcuts.jsx';
+import { Shortcut, hint, label } from './shortcuts.jsx';
 
 // Bare bespoke mark: a prompt chevron + cursor, drawn as paths (no tile
 // behind it). The chevron carries a tight two-stop amber gradient — the
@@ -235,7 +235,7 @@ export default function App() {
             className="workflow-add"
             onClick={addWorkflow}
             title={hint('newWorkflow')}
-            aria-label={hint('newWorkflow')}
+            aria-label={label('newWorkflow')}
           >
             <PlusIcon />
           </button>
