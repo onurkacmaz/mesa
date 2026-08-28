@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Workspace from './Workspace.jsx';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
 import { CloseIcon, PlusIcon } from './icons.jsx';
@@ -8,6 +8,11 @@ import { Shortcut, hint, label } from './shortcuts.jsx';
 // Bare bespoke mark: a prompt chevron + cursor, drawn as paths (no tile
 // behind it). The chevron carries a tight two-stop amber gradient — the
 // only gradient in the whole UI, reserved for this one small glyph.
+//
+// It is not a logo parked in a corner. There is exactly one of these in the
+// window and it stands in front of the workflow you are in, so the app's own
+// mark is also the answer to "where am I" — the same job the chevron does at
+// the prompt inside every pane.
 function BrandMark({ theme }) {
   const [from, to] = theme === 'light' ? ['#c98f36', '#7c4f13'] : ['#f0c481', '#c97f2e'];
   return (
@@ -31,6 +36,10 @@ function BrandMark({ theme }) {
 }
 
 const THEME_LABELS = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+
+// How far into a slot the mark stands. Every slot holds this lane open on its
+// left, so the one the mark is in looks no different in width from the rest.
+const MARK_INSET = 9;
 
 let workflowCounter = 0;
 function makeWorkflow() {
@@ -81,6 +90,31 @@ export default function App() {
   // just a hole on the left of the tab strip.
   const [fullScreen, setFullScreen] = useState(false);
   useEffect(() => window.terminalApi.onFullScreenChange(setFullScreen), []);
+
+  // Where the mark stands. Every slot reserves the same lane for it, so the
+  // names do not shift when it arrives — it travels along the rail from one to
+  // the next instead, which is the one piece of motion up here and the only
+  // one that is actually saying something: it shows you which way you moved.
+  //
+  // Measured rather than derived: a workflow's name is whatever the user typed,
+  // so no arithmetic on this side can know where a slot begins.
+  const railRef = useRef(null);
+  const slotRefs = useRef(new Map());
+  const [markX, setMarkX] = useState(MARK_INSET);
+
+  useLayoutEffect(() => {
+    const rail = railRef.current;
+    const slot = slotRefs.current.get(activeId);
+    if (!rail || !slot) return undefined;
+    const measure = () => setMarkX(slot.offsetLeft + MARK_INSET);
+    measure();
+    // Renaming, a workflow closing, the window resizing: all of them move the
+    // slot without React telling this effect anything new.
+    const observer = new ResizeObserver(measure);
+    observer.observe(rail);
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, [activeId, workflows]);
 
   const addWorkflow = useCallback(() => {
     const wf = makeWorkflow();
@@ -175,16 +209,30 @@ export default function App() {
           workflows themselves, sitting in the window's own drag region beside
           the traffic lights. */}
       <header className={`titlebar${fullScreen ? ' titlebar-fullscreen' : ''}`}>
-        <div className="titlebar-brand">
-          <BrandMark theme={theme} />
-        </div>
+        <div className="workflow-rail" role="tablist" aria-label="Workflows" ref={railRef}>
+          {/* One mark for the whole rail, riding above the slots on its own
+              lane. aria-hidden because it says nothing a screen reader is not
+              already told by aria-selected. */}
+          <span
+            className="rail-mark"
+            aria-hidden="true"
+            style={{ transform: `translateX(${markX}px)` }}
+          >
+            <BrandMark theme={theme} />
+          </span>
 
-        <div className="workflow-tabs" role="tablist" aria-label="Workflows">
-          {workflows.map((wf) => {
+          {workflows.map((wf, index) => {
             const isActive = wf.id === activeId;
             return (
+              <React.Fragment key={wf.id}>
+                {/* A cut between slots, not a border around them: the rail is
+                    one length of material with the workflows scored into it. */}
+                {index > 0 && <span className="rail-cut" aria-hidden="true" />}
               <div
-                key={wf.id}
+                ref={(el) => {
+                  if (el) slotRefs.current.set(wf.id, el);
+                  else slotRefs.current.delete(wf.id);
+                }}
                 role="tab"
                 aria-selected={isActive}
                 className={`workflow-tab${isActive ? ' workflow-tab-active' : ''}`}
@@ -207,6 +255,11 @@ export default function App() {
                     }}
                   />
                 ) : (
+                  // No pane count beside the name. It was real information and
+                  // it still read as a mistake: the workflows are called
+                  // "Workflow 1" and "Workflow 2" until someone renames them,
+                  // so a figure after the name came out as "Workflow 1 1". The
+                  // dock along the bottom already names every open pane.
                   <span className="workflow-tab-label">{wf.name}</span>
                 )}
                 {workflows.length > 1 && (
@@ -222,18 +275,26 @@ export default function App() {
                   </button>
                 )}
               </div>
+              </React.Fragment>
             );
           })}
-
-          <button
-            className="workflow-add"
-            onClick={addWorkflow}
-            title={hint('newWorkflow')}
-            aria-label={label('newWorkflow')}
-          >
-            <PlusIcon />
-          </button>
         </div>
+
+        {/* Outside the rail, not the last thing on it. The rail scrolls once
+            the workflows outgrow it, and anything inside scrolls away with
+            them — which took the one control that makes a new workflow off
+            screen exactly when there were enough of them to need it. No cut in
+            front of it: it belongs to the row of names, and a cut there left it
+            stranded between two scores with nothing to say which side it was
+            on. */}
+        <button
+          className="workflow-add"
+          onClick={addWorkflow}
+          title={hint('newWorkflow')}
+          aria-label={label('newWorkflow')}
+        >
+          <PlusIcon />
+        </button>
 
         <div className="titlebar-spacer" />
 
@@ -262,6 +323,11 @@ export default function App() {
             <span>Browser</span>
           </button>
         </div>
+
+        {/* The same cut that scores the workflows apart, doing the same job at
+            the other end of the strip: what makes a window on one side of it,
+            a preference on the other. */}
+        <span className="rail-cut" aria-hidden="true" />
 
         <div className="theme-switch" role="group" aria-label="Theme">
           {THEME_MODES.map((mode) => (
