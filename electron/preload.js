@@ -6,7 +6,7 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 webFrame.setVisualZoomLevelLimits(1, 1);
 
 contextBridge.exposeInMainWorld('terminalApi', {
-  create: (id, cols, rows) => ipcRenderer.invoke('terminal:create', { id, cols, rows }),
+  create: (id, cols, rows, cwd) => ipcRenderer.invoke('terminal:create', { id, cols, rows, cwd }),
   input: (id, data) => ipcRenderer.send('terminal:input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
   close: (id) => ipcRenderer.send('terminal:close', { id }),

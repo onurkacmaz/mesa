@@ -6,6 +6,7 @@ import PaneDock from './PaneDock.jsx';
 import RevealMark from './RevealMark.jsx';
 import { getTerminalEntry } from './terminalRegistry.js';
 import { getPaneGeom } from './paneGeometry.js';
+import { getPaneCwd, setPaneCwd } from './paneCwd.js';
 import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
 import { SELECTION_COLOR, ropeColor } from './theme.js';
 import { Shortcut } from './shortcuts.jsx';
@@ -126,6 +127,23 @@ const contentBounds = (panes) => {
 
 const rectsIntersect = (a, b) =>
   a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
+// The folder a new terminal should follow: the one the last used session is
+// sitting in. The stack already knows which that is — z is bumped every time a
+// pane is opened, selected or dragged — so terminals are read from the top
+// down and no separate bookkeeping has to be kept in step with it. Browser
+// panes are passed over: they sit in no folder.
+//
+// A session that has not reported a prompt yet has no folder to give, so the
+// search carries on to the one under it rather than dropping straight home.
+function lastUsedTerminalCwd(panes) {
+  const terminals = panes.filter((p) => p.kind !== 'browser').sort((a, b) => b.z - a.z);
+  for (const p of terminals) {
+    const cwd = getPaneCwd(p.id);
+    if (cwd) return cwd;
+  }
+  return undefined;
+}
 
 let counter = 0;
 function nextId(prefix) {
@@ -871,9 +889,17 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
     const zoomNow = zoomRef.current;
     const panNow = panRef.current;
 
+    // A new terminal opens where the last one you used is sitting, the way a
+    // new tab does in a terminal app: you almost always want the folder you
+    // were just working in, not the home directory. Read out here rather than
+    // inside the updater, which React may run more than once. Undefined until
+    // the first session has reported a prompt, and the shell falls back to
+    // home then.
+    const id = nextId('term');
+    const inheritedCwd = kind === 'browser' ? undefined : lastUsedTerminalCwd(panesRef.current);
+
     setPanes((prev) => {
       const index = prev.length;
-      const id = nextId('term');
       const sessionIndex = sessionCounter;
       sessionCounter += 1;
       zCounter.current += 1;
@@ -901,11 +927,17 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
         height: size.height,
         z: zCounter.current,
         kind,
+        initialCwd: inheritedCwd,
         title: kind === 'browser' ? `Browser ${sessionIndex + 1}` : `Terminal ${sessionIndex + 1}`
       };
       setSelectedIds([id]);
       return [...prev, pane];
     });
+
+    // Published straight away so a run of new terminals opened before any of
+    // them has printed a prompt still follows the same folder, rather than the
+    // second one falling back to home.
+    setPaneCwd(id, inheritedCwd);
   }, []);
 
   // The title bar's "new terminal" and "new browser" live outside this

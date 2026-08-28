@@ -5,6 +5,7 @@ import BrowserView, { PageMark, Throbber } from './BrowserView.jsx';
 import { ACCENT } from './theme.js';
 import { setPaneGeom, deletePaneGeom } from './paneGeometry.js';
 import { setPaneTitle, deletePaneTitle } from './paneTitles.js';
+import { setPaneCwd, deletePaneCwd } from './paneCwd.js';
 import { SIDES } from './Connections.jsx';
 import { CloseIcon } from './icons.jsx';
 
@@ -83,9 +84,18 @@ export default function TerminalPane({
   // Live session state, reported up from the view: where the shell is,
   // whether a command is running, and how the last one ended.
   const [status, setStatus] = useState({});
-  const handleStatus = useCallback((id, patch) => {
-    setStatus((prev) => ({ ...prev, ...patch }));
-  }, []);
+  const handleStatus = useCallback(
+    (id, patch) => {
+      // Published as well as kept, because the next terminal to be opened
+      // starts in the folder the last used one is in — and Workspace, which
+      // creates it, never sees this status.
+      if (patch.cwd) setPaneCwd(pane.id, patch.cwd);
+      setStatus((prev) => ({ ...prev, ...patch }));
+    },
+    [pane.id]
+  );
+
+  useEffect(() => () => deletePaneCwd(pane.id), [pane.id]);
 
   const accent = ACCENT[theme];
 
@@ -324,6 +334,7 @@ export default function TerminalPane({
         <div className="pane-screen">
           <TerminalView
             tabId={pane.id}
+            initialCwd={pane.initialCwd}
             accent={accent}
             theme={theme}
             scale={scale}

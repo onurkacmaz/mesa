@@ -11,7 +11,7 @@ import { COMMAND_ROW_BG, COMMAND_RULE, DANGER, TERMINAL_THEMES } from './theme.j
 // left running. Inactive views stay laid out at full size and are hidden with
 // visibility rather than display:none, so their row count never goes stale
 // while they are off screen.
-export default function TerminalView({ tabId, accent, theme, scale, active, focused, onStatus }) {
+export default function TerminalView({ tabId, initialCwd, accent, theme, scale, active, focused, onStatus }) {
   const hostRef = useRef(null);
   const termRef = useRef(null);
   const fitRef = useRef(null);
@@ -255,7 +255,10 @@ export default function TerminalView({ tabId, accent, theme, scale, active, focu
       return true;
     });
 
-    window.terminalApi.create(tabId, term.cols, term.rows).then((ok) => {
+    // The folder the pane was opened with — read at mount, which is the only
+    // moment it means anything: from here on the shell owns its own cwd, and
+    // where it walks to is reported back through OSC 7 above.
+    window.terminalApi.create(tabId, term.cols, term.rows, initialCwd).then((ok) => {
       if (!ok) {
         term.write('\r\n\x1b[31mnode-pty failed to load. This is a mock terminal.\x1b[0m\r\n');
       }

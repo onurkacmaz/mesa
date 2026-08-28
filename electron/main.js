@@ -190,6 +190,24 @@ function shellEnv(shellPath) {
   };
 }
 
+// The directory a new session should start in. The renderer asks for the
+// folder the last used terminal is sitting in, and that folder can be gone by
+// the time it is asked for -- deleted from another pane, an unmounted volume,
+// a worktree that was pruned. pty.spawn throws on a cwd that does not exist
+// and the pane would simply sit dead, so the path is checked here and home
+// stands in when it does not survive. Same guard the git:branch handler makes
+// on a path crossing IPC.
+function resolveCwd(requested) {
+  if (typeof requested === 'string' && requested.startsWith('/')) {
+    try {
+      if (fs.statSync(requested).isDirectory()) return requested;
+    } catch {
+      // gone; fall through to home
+    }
+  }
+  return os.homedir();
+}
+
 // Kills the whole process group the pty spawned (the shell AND anything it
 // launched, e.g. a dev server), not just the shell itself. A plain
 // term.kill() only signals the shell; child processes survive as orphans.
@@ -272,18 +290,24 @@ app.whenReady().then(() => {
   buildApplicationMenu();
   const win = createWindow();
 
-  ipcMain.handle('terminal:create', (event, { id, cols, rows }) => {
+  ipcMain.handle('terminal:create', (event, { id, cols, rows, cwd }) => {
     if (!pty) return false;
     if (terminals.has(id)) return true;
 
     const shellPath = shellForPlatform();
-    const term = pty.spawn(shellPath, shellArgs(), {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      cwd: os.homedir(),
-      env: shellEnv(shellPath)
-    });
+    let term;
+    try {
+      term = pty.spawn(shellPath, shellArgs(), {
+        name: 'xterm-256color',
+        cols: cols || 80,
+        rows: rows || 24,
+        cwd: resolveCwd(cwd),
+        env: shellEnv(shellPath)
+      });
+    } catch (err) {
+      console.error('shell spawn failed:', err.message);
+      return false;
+    }
 
     term.onData((data) => {
       if (!win.isDestroyed()) {
