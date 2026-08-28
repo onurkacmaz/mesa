@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { GUEST_FULLSCREEN_SHIM } from './guestFullscreen.js';
 
 // A browser pane, whole: Chromium's toolbar plus the screen the page sits on.
 // This strip is deliberately outside the app's own square language — it is
@@ -168,6 +169,12 @@ export default function BrowserView({ paneId, focused, onStatus }) {
 
     const onDomReady = () => {
       readyRef.current = true;
+      // Every navigation gets its own document, and each one has to be told
+      // again that fullscreen stops at the edge of this pane. An in-page
+      // navigation keeps the document, and with it the shim already on it.
+      w.executeJavaScript(GUEST_FULLSCREEN_SHIM).catch(() => {
+        // A page that navigated away mid-injection: the next dom-ready does it.
+      });
       syncNav();
     };
     const onStart = () => {
