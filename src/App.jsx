@@ -52,8 +52,6 @@ export default function App() {
   workflowsRef.current = workflows;
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
-  const paneCountsRef = useRef(paneCounts);
-  paneCountsRef.current = paneCounts;
 
   const [themeMode, setThemeMode] = useState(readStoredMode);
   const [theme, setTheme] = useState(() =>
@@ -104,22 +102,18 @@ export default function App() {
     });
   }, []);
 
-  // Closing a workflow kills every terminal in it, so it asks — except when
-  // the workflow is empty, where there is nothing to confirm and a dialog
-  // would just be a speed bump.
-  const requestCloseWorkflow = useCallback(
-    (id) => {
-      const target = id ?? activeIdRef.current;
-      if (!target) return;
-      if (workflowsRef.current.length === 1) return; // never close the last one
-      if ((paneCountsRef.current[target] ?? 0) === 0) {
-        closeWorkflow(target);
-        return;
-      }
-      setPendingClose(target);
-    },
-    [closeWorkflow]
-  );
+  // Closing a workflow kills every terminal in it, so it always asks — the ×
+  // on the tab and ⌘W alike. An empty workflow used to close on the spot,
+  // which made the same gesture mean two different things depending on state:
+  // a question most of the time, and an irreversible close the rest of it. The
+  // rail says how much is at stake instead, so an empty one is answered just
+  // as fast without the shortcut ever being the odd one out.
+  const requestCloseWorkflow = useCallback((id) => {
+    const target = id ?? activeIdRef.current;
+    if (!target) return;
+    if (workflowsRef.current.length === 1) return; // never close the last one
+    setPendingClose(target);
+  }, []);
 
   const confirmCloseWorkflow = useCallback(() => {
     setPendingClose((id) => {
@@ -307,7 +301,14 @@ export default function App() {
               <strong>
                 {workflows.find((w) => w.id === pendingClose)?.name} will close
               </strong>
-              <span>anything running inside it is terminated</span>
+              {/* What is actually at stake, which is the whole reason to ask.
+                  An empty workflow says so plainly rather than warning about
+                  processes that are not there. */}
+              <span>
+                {(paneCounts[pendingClose] ?? 0) === 0
+                  ? 'nothing is open inside it'
+                  : 'anything running inside it is terminated'}
+              </span>
             </div>
             <div className="confirm-rail-actions">
               <button type="button" className="confirm-cancel" onClick={() => setPendingClose(null)}>

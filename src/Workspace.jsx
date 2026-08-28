@@ -964,22 +964,38 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
     });
   }, []);
 
-  const closePane = useCallback(
-    (id) => {
-      setPanes((prev) => prev.filter((p) => p.id !== id));
-      setSelectedIds((prev) => prev.filter((x) => x !== id));
-      pruneConnections([id]);
-    },
-    [pruneConnections]
-  );
+  // Every way out of a pane ends the same way — the process group inside it is
+  // killed, and whatever was running there goes with it — so every way out
+  // asks first. The titlebar ×, the dock's × and ⌘W all come through here
+  // rather than closing anything themselves, which is what keeps one route
+  // from quietly skipping the question.
+  //
+  // The ids are snapshotted at the moment the request is made, so the answer
+  // applies to what was targeted and not to whatever happens to be selected
+  // by the time it is given.
+  const restoreFocusRef = useRef(null);
+  const requestClosePanes = useCallback((ids) => {
+    if (ids.length === 0) return;
+    setPendingClose((current) => {
+      // A question already standing owns the rail: a second × behind it must
+      // not change what is about to be answered.
+      if (current) return current;
+      // Take the keyboard away from the terminal while the question stands,
+      // so keystrokes meant for the dialog cannot end up at a shell prompt.
+      restoreFocusRef.current = document.activeElement;
+      document.activeElement?.blur?.();
+      return ids;
+    });
+  }, []);
 
-  // ⌘W closes the current selection rather than the window, after confirming.
-  // The ids are snapshotted when the shortcut fires so the answer applies to
-  // what was targeted, not to whatever happens to be selected later.
+  // The × on a pane closes that pane, even when it is one of several selected:
+  // the button is attached to a specific window and points at it alone.
+  const closePane = useCallback((id) => requestClosePanes([id]), [requestClosePanes]);
+
+  // ⌘W closes the current selection rather than the window.
   const onRequestCloseRef = useRef(onRequestClose);
   onRequestCloseRef.current = onRequestClose;
 
-  const restoreFocusRef = useRef(null);
   const closeSelected = useCallback(() => {
     const ids = selectedIdsRef.current;
     // Nothing selected means ⌘W is aimed at the workflow itself: close the
@@ -989,15 +1005,8 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
       onRequestCloseRef.current?.();
       return;
     }
-    setPendingClose((current) => {
-      if (current) return current;
-      // Take the keyboard away from the terminal while the question stands,
-      // so keystrokes meant for the dialog cannot end up at a shell prompt.
-      restoreFocusRef.current = document.activeElement;
-      document.activeElement?.blur?.();
-      return ids;
-    });
-  }, []);
+    requestClosePanes(ids);
+  }, [requestClosePanes]);
 
   const cancelClose = useCallback(() => {
     setPendingClose(null);
