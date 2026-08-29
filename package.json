@@ -1,6 +1,6 @@
 {
   "name": "mesa",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Multi-terminal, draggable workflow canvas desktop app POC",
   "author": "Onur Kaçmaz <kacmaz.onur@hotmail.com>",
