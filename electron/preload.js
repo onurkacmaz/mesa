@@ -11,6 +11,25 @@ contextBridge.exposeInMainWorld('terminalApi', {
   resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
   close: (id) => ipcRenderer.send('terminal:close', { id }),
   gitBranch: (dir) => ipcRenderer.invoke('git:branch', dir),
+
+  // The session travels as text in both directions. Structured clone would
+  // work, but text is what lands on disk, so sending anything else would mean
+  // two places deciding what a session is.
+  loadSession: () => ipcRenderer.invoke('session:load'),
+  saveSession: (payload) => ipcRenderer.send('session:save', payload),
+  // For a file that was read but could not be understood: keep it rather than
+  // let the next save overwrite it.
+  archiveSession: () => ipcRenderer.invoke('session:archive'),
+  // Used once, on the way out. The renderer is about to stop existing, so a
+  // fire-and-forget send has no one left to finish it: this blocks until the
+  // file is written.
+  saveSessionSync: (payload) => ipcRenderer.sendSync('session:save-sync', payload),
+  // A shortcut that was typed inside a browser pane and belongs to the app.
+  onGuestShortcut: (callback) => {
+    const listener = (event, init) => callback(init);
+    ipcRenderer.on('guest:shortcut', listener);
+    return () => ipcRenderer.removeListener('guest:shortcut', listener);
+  },
   onFullScreenChange: (callback) => {
     const listener = (event, isFullScreen) => callback(isFullScreen);
     ipcRenderer.on('window:fullscreen', listener);

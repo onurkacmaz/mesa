@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import Workspace from './Workspace.jsx';
+import Workspace, { readCounters, seedCounters } from './Workspace.jsx';
+import { SESSION_VERSION, counterSeedsFrom, normalizeSession } from './session.mjs';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
 import { CloseIcon, PlusIcon } from './icons.jsx';
 import { getWorkspaceActions } from './workspaceActions.js';
@@ -47,20 +48,147 @@ function makeWorkflow() {
   return { id: `wf-${workflowCounter}`, name: `Workflow ${workflowCounter}` };
 }
 
+// How long the app waits after the last change before writing the session.
+// Panes are dragged and the canvas panned continuously, so a write per change
+// would be a write per frame; a pause of this length means the file is written
+// once the hand comes off, and never during the movement itself.
+const SAVE_DEBOUNCE_MS = 800;
+
 export default function App() {
-  const [workflows, setWorkflows] = useState(() => [makeWorkflow()]);
-  const [activeId, setActiveId] = useState(() => workflows?.[0]?.id);
+  // null until the last session has been read back. Nothing is rendered
+  // before then on purpose: opening a default workflow first would mount a
+  // workspace, spawn a shell for it, and kill it again a moment later —
+  // visible as a flash, and a process born only to die.
+  const [workflows, setWorkflows] = useState(null);
+  const [activeId, setActiveId] = useState(null);
   const [renamingId, setRenamingId] = useState(null);
   const [nameDraft, setNameDraft] = useState('');
+  // The workflow a question is standing about, and how much work was in flight
+  // at the moment it was asked. Snapshotted with the request rather than read
+  // as it is answered, so the number on the rail is the one the question was
+  // about even if a command finishes while you are reading it.
   const [pendingClose, setPendingClose] = useState(null);
-  const [paneCounts, setPaneCounts] = useState({});
 
-  // ⌘T opens a workflow, ⌘1..9 jumps straight to one. Held in refs so the
+  // ⌘T opens a workflow, ⌥⌘1..9 jumps straight to one. Held in refs so the
   // listeners never go stale as workflows come and go.
   const workflowsRef = useRef(workflows);
   workflowsRef.current = workflows;
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+
+  // What each workflow opens with, keyed by id. Kept out of state because it
+  // is read exactly once per workflow — at the moment its workspace mounts —
+  // and a workflow opened after the restore simply has no entry.
+  const initialStatesRef = useRef(new Map());
+  // Guards every write. Until the last session has been read there is nothing
+  // worth saying, and saying it anyway would overwrite the file being read
+  // with an empty app.
+  const readyRef = useRef(false);
+  const saveTimerRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let restored = null;
+      try {
+        const text = await window.terminalApi.loadSession();
+        restored = text ? normalizeSession(JSON.parse(text)) : null;
+        // Text that came back but adds up to nothing this app can open — a
+        // version it does not know, a shape it cannot trust. The app carries
+        // on empty, but the file is put beyond the reach of the first save,
+        // because it is the only copy of whatever it was holding.
+        if (text && !restored) await window.terminalApi.archiveSession();
+      } catch (err) {
+        // A session that cannot be read is a lost layout, never a lost app.
+        console.error('session restore failed:', err);
+      }
+      if (cancelled) return;
+
+      if (restored) {
+        // Before any workspace mounts: a workspace that mounted first would
+        // ask for an id from a counter still sitting at zero.
+        const seeds = counterSeedsFrom(restored);
+        seedCounters(seeds);
+        workflowCounter = Math.max(workflowCounter, seeds.workflow);
+        for (const workflow of restored.workflows) {
+          initialStatesRef.current.set(workflow.id, workflow);
+        }
+        setWorkflows(restored.workflows.map(({ id, name }) => ({ id, name })));
+        setActiveId(restored.activeWorkflowId);
+      } else {
+        const workflow = makeWorkflow();
+        setWorkflows([workflow]);
+        setActiveId(workflow.id);
+      }
+      readyRef.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The whole app as one string. Every workflow is asked for its own half —
+  // App holds no pane state and never has, so the only place that knows what
+  // is on a canvas is the canvas.
+  const snapshot = useCallback(() => {
+    const open = workflowsRef.current ?? [];
+    return JSON.stringify({
+      version: SESSION_VERSION,
+      activeWorkflowId: activeIdRef.current,
+      counters: { ...readCounters(), workflow: workflowCounter },
+      workflows: open.map((workflow) => ({
+        id: workflow.id,
+        name: workflow.name,
+        // A workspace that has somehow gone is saved as an empty canvas rather
+        // than dropped: its name and its place on the rail are still real.
+        ...(getWorkspaceActions(workflow.id)?.serialize() ?? {
+          view: { zoom: 1, pan: { x: 0, y: 0 } },
+          panes: [],
+          connections: []
+        })
+      }))
+    });
+  }, []);
+
+  const scheduleSave = useCallback(() => {
+    if (!readyRef.current) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      try {
+        window.terminalApi.saveSession(snapshot());
+      } catch (err) {
+        console.error('session save failed:', err);
+      }
+    }, SAVE_DEBOUNCE_MS);
+  }, [snapshot]);
+
+  // Anything the rail itself owns: a workflow opened, closed, renamed, or
+  // switched to. What is inside a workflow reports itself through onDirty.
+  useEffect(() => {
+    scheduleSave();
+  }, [workflows, activeId, scheduleSave]);
+
+  // The way out. A debounced write has up to SAVE_DEBOUNCE_MS of work still
+  // pending, and the renderer is about to stop existing — so the last write is
+  // synchronous, and waits for the file to land rather than for a reply that
+  // will never be read.
+  useEffect(() => {
+    const flush = () => {
+      if (!readyRef.current) return;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      try {
+        window.terminalApi.saveSessionSync(snapshot());
+      } catch (err) {
+        console.error('session flush failed:', err);
+      }
+    };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, [snapshot]);
 
   const [themeMode, setThemeMode] = useState(readStoredMode);
   const [theme, setTheme] = useState(() =>
@@ -90,6 +218,19 @@ export default function App() {
   // just a hole on the left of the tab strip.
   const [fullScreen, setFullScreen] = useState(false);
   useEffect(() => window.terminalApi.onFullScreenChange(setFullScreen), []);
+
+  // A key pressed inside a browser pane never reached the window, so every app
+  // shortcut died the moment a page had focus. Main lifts the few the app owns
+  // off the guest and sends them here, where they are replayed as a real
+  // keydown on the window — so every existing handler answers it without
+  // knowing it came from a page.
+  useEffect(
+    () =>
+      window.terminalApi.onGuestShortcut?.((init) => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true }));
+      }),
+    []
+  );
 
   // Where the mark stands. Every slot reserves the same lane for it, so the
   // names do not shift when it arrives — it travels along the rail from one to
@@ -125,6 +266,7 @@ export default function App() {
   // Closing a workflow tears down every terminal in it, which happens simply
   // by unmounting: each session's cleanup kills its own process group.
   const closeWorkflow = useCallback((id) => {
+    initialStatesRef.current.delete(id);
     setWorkflows((prev) => {
       if (prev.length === 1) return prev; // never leave the shell with nothing
       const index = prev.findIndex((w) => w.id === id);
@@ -142,16 +284,27 @@ export default function App() {
   // a question most of the time, and an irreversible close the rest of it. The
   // rail says how much is at stake instead, so an empty one is answered just
   // as fast without the shortcut ever being the odd one out.
-  const requestCloseWorkflow = useCallback((id) => {
-    const target = id ?? activeIdRef.current;
-    if (!target) return;
-    if (workflowsRef.current.length === 1) return; // never close the last one
-    setPendingClose(target);
-  }, []);
+  const requestCloseWorkflow = useCallback(
+    (id) => {
+      const target = id ?? activeIdRef.current;
+      if (!target) return;
+      if ((workflowsRef.current?.length ?? 0) <= 1) return; // never close the last one
+      // The same rule the panes inside it follow: the question is for work in
+      // flight, and a workflow of idle prompts and pages has none. App holds no
+      // pane state, so it asks the workspace, exactly as it does for a save.
+      const running = getWorkspaceActions(target)?.runningCount?.() ?? 0;
+      if (!running) {
+        closeWorkflow(target);
+        return;
+      }
+      setPendingClose({ id: target, running });
+    },
+    [closeWorkflow]
+  );
 
   const confirmCloseWorkflow = useCallback(() => {
-    setPendingClose((id) => {
-      if (id) closeWorkflow(id);
+    setPendingClose((target) => {
+      if (target) closeWorkflow(target.id);
       return null;
     });
   }, [closeWorkflow]);
@@ -190,9 +343,14 @@ export default function App() {
         addWorkflow();
         return;
       }
-      const digit = Number(e.key);
-      if (Number.isInteger(digit) && digit >= 1 && digit <= 9) {
-        const target = workflowsRef.current[digit - 1];
+      // Held with alt, because the bare digits now reach the tabs inside the
+      // selected window. Matched on the physical key: alt rewrites e.key into
+      // whatever glyph the layout puts there (⌥1 is "¡" on some), so reading
+      // the character would make this shortcut depend on the keyboard.
+      if (!e.altKey) return;
+      const match = /^Digit([1-9])$/.exec(e.code);
+      if (match) {
+        const target = workflowsRef.current?.[Number(match[1]) - 1];
         if (target) {
           e.preventDefault();
           setActiveId(target.id);
@@ -202,6 +360,12 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [addWorkflow]);
+
+  // The one frame between the window appearing and the session arriving. The
+  // window's own background colour is the app's, so this reads as the app
+  // opening rather than as an empty page — and no rail is drawn holding
+  // workflows that are about to be replaced by the real ones.
+  if (!workflows) return null;
 
   return (
     <div className="app">
@@ -353,27 +517,26 @@ export default function App() {
             workflowId={wf.id}
             theme={theme}
             active={wf.id === activeId}
+            initialState={initialStatesRef.current.get(wf.id)}
+            onDirty={scheduleSave}
             onRequestClose={() => requestCloseWorkflow(wf.id)}
-            onPaneCountChange={(count) =>
-              setPaneCounts((prev) => (prev[wf.id] === count ? prev : { ...prev, [wf.id]: count }))
-            }
           />
         ))}
 
         {pendingClose && (
           <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Confirm close">
-            <span className="confirm-rail-count">{paneCounts[pendingClose] ?? 0}</span>
+            <span className="confirm-rail-count">{pendingClose.running}</span>
             <div className="confirm-rail-copy">
               <strong>
-                {workflows.find((w) => w.id === pendingClose)?.name} will close
+                {workflows.find((w) => w.id === pendingClose.id)?.name} will close
               </strong>
               {/* What is actually at stake, which is the whole reason to ask.
-                  An empty workflow says so plainly rather than warning about
-                  processes that are not there. */}
+                  A workflow with nothing running never gets here — it closes on
+                  the spot — so this speaks plainly rather than hedging. */}
               <span>
-                {(paneCounts[pendingClose] ?? 0) === 0
-                  ? 'nothing is open inside it'
-                  : 'anything running inside it is terminated'}
+                {pendingClose.running === 1
+                  ? 'a command is running inside it'
+                  : 'commands are running inside it'}
               </span>
             </div>
             <div className="confirm-rail-actions">

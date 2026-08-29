@@ -12,6 +12,82 @@ try {
 
 const terminals = new Map();
 
+// The keys the app owns even while a page has the keyboard. A browser pane is
+// a separate WebContents with its own input target, so nothing typed inside
+// one ever reaches the window's own listeners — ⌘W did nothing until you
+// clicked back out onto the canvas, which made the shortcut look broken
+// exactly where it was most needed.
+//
+// Deliberately a short list. Everything not named here stays with the page,
+// because a guest is a real browser and ⌘C, ⌘V, ⌘F and ⌘0 belong to it.
+const GUEST_APP_KEYS = new Set(['w', 'n', 'b', 't', 'l']);
+
+// Where the last session is kept. userData rather than the renderer's own
+// storage: a layout someone spent a morning arranging should not be thrown
+// away by a cache clear, it should be readable when a restore goes wrong, and
+// it is the same file an export would hand to someone else.
+const sessionPath = () => path.join(app.getPath('userData'), 'session.json');
+
+// Written to a sibling first and renamed into place, because rename is atomic
+// and a write is not. Quitting mid-write is exactly when this file is being
+// touched, and a half-written JSON is the one failure that costs the whole
+// layout rather than the last few seconds of it.
+function writeSession(payload) {
+  if (typeof payload !== 'string') return false;
+  const file = sessionPath();
+  const temp = `${file}.tmp`;
+  try {
+    fs.writeFileSync(temp, payload, 'utf8');
+    fs.renameSync(temp, file);
+    return true;
+  } catch (err) {
+    console.error('session write failed:', err.message);
+    try {
+      fs.unlinkSync(temp);
+    } catch {
+      // nothing to clean up
+    }
+    return false;
+  }
+}
+
+// Handed to the renderer as raw text, which validates it: main has no business
+// knowing the shape of a workflow, and the rules for trusting a file live in
+// one place (src/session.mjs) where they are testable. Unparseable text is
+// kept aside rather than deleted — it is the only copy of a layout, and its
+// author may want to look at it.
+function readSession() {
+  const file = sessionPath();
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return null; // no file yet: a first launch
+  }
+  try {
+    JSON.parse(text);
+    return text;
+  } catch (err) {
+    console.error('session file unreadable, set aside:', err.message);
+    archiveSession();
+    return null;
+  }
+}
+
+// Put the session file beyond the reach of the next write. Used for a file
+// this app cannot make sense of — unparseable, or written by a version that no
+// longer exists — because the alternative is that the first save of the new
+// session quietly overwrites the only copy of someone's layout. It survives as
+// session.json.bak, which is inspectable and can be renamed back by hand.
+function archiveSession() {
+  try {
+    fs.renameSync(sessionPath(), `${sessionPath()}.bak`);
+    return true;
+  } catch {
+    return false; // nothing there, or nowhere to put it
+  }
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1600,
@@ -48,6 +124,28 @@ function createWindow() {
   // Schemes other than http(s) (mailto:, a custom protocol) are refused
   // silently.
   win.webContents.on('did-attach-webview', (event, guest) => {
+    // Lifted off the guest before the page sees them and handed to the window,
+    // which replays them as if they had been typed on the canvas.
+    guest.on('before-input-event', (inputEvent, input) => {
+      if (input.type !== 'keyDown') return;
+      if (!(process.platform === 'darwin' ? input.meta : input.control)) return;
+      // Digits are matched on the physical key: with alt held, the character
+      // an input reports depends on the keyboard layout (⌥1 is "¡" on some),
+      // and ⌥⌘1..9 is how the workflow rail is reached.
+      const isDigit = /^Digit[1-9]$/.test(input.code);
+      if (!isDigit && !GUEST_APP_KEYS.has((input.key || '').toLowerCase())) return;
+      inputEvent.preventDefault();
+      if (win.isDestroyed()) return;
+      win.webContents.send('guest:shortcut', {
+        key: input.key,
+        code: input.code,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        altKey: input.alt,
+        shiftKey: input.shift
+      });
+    });
+
     guest.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) {
         setImmediate(() => {
@@ -359,6 +457,25 @@ app.whenReady().then(() => {
     } catch {
       return null;
     }
+  });
+
+  ipcMain.handle('session:load', () => readSession());
+
+  // The renderer is the only side that knows whether the text it was handed
+  // adds up to a session, so it is the side that asks for an unusable one to
+  // be kept.
+  ipcMain.handle('session:archive', () => archiveSession());
+
+  // Two doors to the same write. The debounced one is asynchronous and covers
+  // the ordinary case; the synchronous one is what the renderer uses on its
+  // way out, where a message that merely got sent is not enough — the reply is
+  // what proves the file landed before the window was gone.
+  ipcMain.on('session:save', (event, payload) => {
+    writeSession(payload);
+  });
+
+  ipcMain.on('session:save-sync', (event, payload) => {
+    event.returnValue = writeSession(payload);
   });
 
   ipcMain.on('terminal:close', (event, { id }) => {

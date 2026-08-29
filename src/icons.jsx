@@ -29,6 +29,24 @@ export function PlusIcon({ size = 11 }) {
   );
 }
 
+// Where a session starts from: a standing bar with the line that runs out of
+// it. It names the moment, not the act — the command is laid at the prompt on
+// open and left unrun, so a play triangle would promise something this does
+// not do.
+//
+// Emphatically NOT a chevron: the pane already wears one as its own mark, at
+// the other end of the same row, and two different things in one title bar
+// must not share a glyph. Not a down-chevron or a row of dots either — those
+// say "a menu is here" and say nothing about what is in it.
+export function StartupIcon({ size = 11 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 11 11" fill="none" aria-hidden="true">
+      <line x1="1.9" y1="2.2" x2="1.9" y2="8.8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
+      <line x1="4.2" y1="5.5" x2="9.4" y2="5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" />
+    </svg>
+  );
+}
+
 export function MinusIcon({ size = 11 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 11 11" fill="none" aria-hidden="true">

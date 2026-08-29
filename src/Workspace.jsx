@@ -7,6 +7,8 @@ import RevealMark from './RevealMark.jsx';
 import { getTerminalEntry } from './terminalRegistry.js';
 import { getPaneGeom } from './paneGeometry.js';
 import { getPaneCwd, setPaneCwd } from './paneCwd.js';
+import { getPaneUrl, setPaneUrl } from './paneUrls.js';
+import { isPaneRunning } from './paneRunning.js';
 import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
 import { SELECTION_COLOR, ropeColor } from './theme.js';
 import { Shortcut } from './shortcuts.jsx';
@@ -138,9 +140,17 @@ const rectsIntersect = (a, b) =>
 // search carries on to the one under it rather than dropping straight home.
 function lastUsedTerminalCwd(panes) {
   const terminals = panes.filter((p) => p.kind !== 'browser').sort((a, b) => b.z - a.z);
-  for (const p of terminals) {
-    const cwd = getPaneCwd(p.id);
-    if (cwd) return cwd;
+  for (const pane of terminals) {
+    // Within one box the tab in front is the session you were last looking
+    // at, so it answers before the ones behind it. The stack orders the boxes;
+    // this orders what is inside one.
+    for (const tab of [
+      ...pane.tabs.filter((t) => t.id === pane.activeTabId),
+      ...pane.tabs.filter((t) => t.id !== pane.activeTabId)
+    ]) {
+      const cwd = getPaneCwd(tab.id);
+      if (cwd) return cwd;
+    }
   }
   return undefined;
 }
@@ -155,12 +165,73 @@ function nextId(prefix) {
 // never land on the same tint back to back.
 let sessionCounter = 0;
 
+// Both counters start at zero every launch, which is right for a first launch
+// and wrong for every restored one: a restored `term-3` followed by a freshly
+// minted `term-1` is two panes answering to one id. Seeded from the restored
+// session before any workspace mounts, and only ever upward — a workspace that
+// mounts later can never pull a counter back under an id already handed out.
+export function seedCounters({ pane, conn, session }) {
+  counter = Math.max(counter, pane ?? 0, conn ?? 0);
+  sessionCounter = Math.max(sessionCounter, session ?? 0);
+}
+
+// Written into the session so a pane that was opened and then closed still
+// counts. Without it, closing "Terminal 5" and restoring a file that only
+// remembers up to "Terminal 3" would hand out "Terminal 4" again — a number
+// this session has already used.
+export function readCounters() {
+  return { pane: counter, conn: counter, session: sessionCounter };
+}
+
+// One session: a terminal or a page. A pane is the box these sit in, and the
+// box may hold any number of them — but never a mixture, because a window
+// keeps to its own kind.
+//
+// Numbered off the same counters panes are, since a tab IS what a pane used to
+// be: its id is what the pty, the title, the folder and the address are all
+// keyed by.
+function makeTab(kind, initialCwd) {
+  sessionCounter += 1;
+  const tab = {
+    id: nextId('term'),
+    title: kind === 'browser' ? `Browser ${sessionCounter}` : `Terminal ${sessionCounter}`
+  };
+  if (initialCwd) tab.initialCwd = initialCwd;
+  return tab;
+}
+
+// The pane objects a workflow opens with. What is on disk is each tab as it
+// was; what a tab is created from carries the two "open me here" fields the
+// views read on mount, so a saved folder and address arrive the same way an
+// inherited folder does on a brand new terminal.
+function hydratePanes(saved) {
+  return (saved ?? []).map((pane) => ({
+    ...pane,
+    tabs: pane.tabs.map(({ cwd, url, ...tab }) => ({
+      ...tab,
+      ...(cwd ? { initialCwd: cwd } : {}),
+      ...(url ? { initialUrl: url } : {})
+    }))
+  }));
+}
+
 // One workflow: its own canvas, its own terminals, its own view. Every open
 // workflow stays mounted — a workflow you switched away from is usually the
 // one with something running in it — and only the active one is visible.
-export default function Workspace({ workflowId, theme, active, onRequestClose, onPaneCountChange }) {
-  const [panes, setPanes] = useState([]);
-  const [zoom, setZoom] = useState(1);
+export default function Workspace({
+  workflowId,
+  theme,
+  active,
+  initialState,
+  onDirty,
+  onRequestClose
+}) {
+  // Read once, on mount, and never again. A restored session is a seed, not a
+  // binding: the moment this workspace is on screen the user owns its state,
+  // and following the prop afterwards would put the file and the canvas in a
+  // fight over which of them is the workflow.
+  const [panes, setPanes] = useState(() => hydratePanes(initialState?.panes));
+  const [zoom, setZoom] = useState(() => clampZoom(initialState?.view?.zoom ?? 1));
   const [selectedIds, setSelectedIds] = useState([]);
   const [isPanning, setIsPanning] = useState(false);
   const [isMarqueeSelecting, setIsMarqueeSelecting] = useState(false);
@@ -172,7 +243,13 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
   // triggered. This state changes only when one is created or deleted — never
   // while dragging, which is the whole reason the rope layer reads geometry
   // out of paneGeometry instead of out of here.
-  const [connections, setConnections] = useState([]);
+  const [connections, setConnections] = useState(() => initialState?.connections ?? []);
+  // "Something here is worth writing down." Held in a ref so the workspace can
+  // say it from inside a pan — which runs on every mousemove — without the
+  // callback identity re-rendering anything.
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+
   const [selectedConnId, setSelectedConnId] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const draftRef = useRef(null);
@@ -213,7 +290,19 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
     [cancelReveal, clearRevealTimers]
   );
 
-  const zCounter = useRef(1);
+  // Restored panes carry the stacking they were left in, so the counter has to
+  // resume above the highest of them or the next pane opened would land under
+  // panes that were already there.
+  const zCounter = useRef(
+    (initialState?.panes ?? []).reduce((top, p) => Math.max(top, p.z ?? 1), 1)
+  );
+  // Defined up here because the keyboard effect below lists it as a
+  // dependency, and a dependency array is read during render — a const
+  // declared further down would still be in its temporal dead zone.
+  const selectTab = useCallback((paneId, tabId) => {
+    setPanes((prev) => prev.map((p) => (p.id === paneId ? { ...p, activeTabId: tabId } : p)));
+  }, []);
+
   const canvasRef = useRef(null);
   const panStateRef = useRef(null);
   const spacePressedRef = useRef(false);
@@ -232,15 +321,17 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
   //     updater more than once (eager state evaluation), so a setPan() called
   //     from inside a setZoom() updater could apply the pan twice — which
   //     showed up as the viewport jumping unpredictably on every zoom step.
-  const zoomRef = useRef(1);
-  const panRef = useRef({ x: 0, y: 0 });
+  const zoomRef = useRef(clampZoom(initialState?.view?.zoom ?? 1));
+  const panRef = useRef({
+    x: initialState?.view?.pan?.x ?? 0,
+    y: initialState?.view?.pan?.y ?? 0
+  });
   const contentRef = useRef(null);
   const gridRef = useRef(null);
   const gridZoomRef = useRef(null);
 
   useEffect(() => {
     panesRef.current = panes;
-    onPaneCountChange?.(panes.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panes]);
   useEffect(() => {
@@ -302,6 +393,7 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
     // with the zoom we are in the middle of leaving — the frame would trail one
     // step behind on every single zoom.
     minimapApiRef.current?.sync();
+    onDirtyRef.current?.();
   }, []);
 
   // Put a canvas point in the middle of the window at the current zoom. The
@@ -362,13 +454,50 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
   // box to centre any more, so the origin is simply where the first pane will
   // be placed, and putting it in the middle leaves room to open up in every
   // direction rather than only down and to the right.
+  //
+  // A restored workflow has somewhere it already belongs, and this is the
+  // effect that would take it away: it runs on mount and would push a view
+  // that was saved at a deliberate place back to the origin. So a restored
+  // view is committed as it is, and only a workflow that has never been
+  // anywhere gets centred.
   useLayoutEffect(() => {
+    // Restored panes have reported nothing yet — no prompt has printed, no
+    // guest has navigated — so the registries the session is read out of are
+    // empty until they do. Seeding them from the file is what lets the next
+    // terminal open in the right folder, and what keeps a session saved
+    // before the first prompt from forgetting where everything was.
+    for (const pane of initialState?.panes ?? []) {
+      if (pane.cwd) setPaneCwd(pane.id, pane.cwd);
+      if (pane.url) setPaneUrl(pane.id, pane.url);
+    }
+
     const container = canvasRef.current;
     if (!container) return;
+    if (initialState?.view) {
+      // The transform is written by hand rather than rendered, so a restored
+      // view is not on screen until something commits it — and it has to be
+      // the first paint, or the canvas visibly jumps into place.
+      commitView();
+      return;
+    }
     commitView(undefined, {
       x: container.clientWidth / 2,
       y: container.clientHeight / 2
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The same view, committed once more after the tree has settled. The layout
+  // effect above runs while refs are still being attached, so the minimap's
+  // own first sync finds no canvas to measure the viewport against and draws
+  // nothing. A workflow that opens empty never notices — the first pane
+  // opened syncs it — but a restored one opens with its panes already in
+  // place and nothing after mount would ever ask again, leaving the map blank
+  // until the first pan. Passive effects run after every ref is attached and
+  // after the minimap has published its api, so by here there is a canvas to
+  // measure and someone to tell.
+  useEffect(() => {
+    commitView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -868,6 +997,18 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
       } else if (e.key.toLowerCase() === 'b') {
         e.preventDefault();
         addTerminal('browser');
+      } else if (/^Digit[1-9]$/.test(e.code) && !e.altKey) {
+        // The digits reach the sessions inside the selected window, the way
+        // they do in every tabbed thing. Held with alt they belong to the
+        // workflow rail, which App listens for — so this hands them over
+        // rather than swallowing them.
+        const selected = selectedIdsRef.current;
+        if (selected.length !== 1) return;
+        const pane = panesRef.current.find((p) => p.id === selected[0]);
+        const tab = pane?.tabs[Number(e.code.slice(-1)) - 1];
+        if (!tab) return;
+        e.preventDefault();
+        selectTab(pane.id, tab.id);
       } else if (e.key.toLowerCase() === 'w') {
         // Always swallowed, even with nothing selected: ⌘W must never fall
         // through to closing the workspace.
@@ -878,74 +1019,205 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, zoomIn, zoomOut, zoomReset, fitToContent]);
+  }, [active, zoomIn, zoomOut, zoomReset, fitToContent, selectTab]);
 
-  const addTerminal = useCallback((kind = 'terminal') => {
-    // Read the view once, outside the updater: this converts the centre of
-    // whatever is currently on screen into canvas coordinates, so a new pane
-    // lands in front of the user wherever they have panned or zoomed to,
-    // rather than back at a fixed corner of a 6000x4000 canvas.
-    const rect = canvasRef.current?.getBoundingClientRect();
-    const zoomNow = zoomRef.current;
-    const panNow = panRef.current;
-
-    // A new terminal opens where the last one you used is sitting, the way a
-    // new tab does in a terminal app: you almost always want the folder you
-    // were just working in, not the home directory. Read out here rather than
-    // inside the updater, which React may run more than once. Undefined until
-    // the first session has reported a prompt, and the shell falls back to
-    // home then.
-    const id = nextId('term');
+  // A new session joins the selected window when that window is the same kind,
+  // and opens its own window otherwise. A terminal and a page are different
+  // tools with different chrome, so a box that held both would have to answer
+  // to two title bars at once.
+  const addTab = useCallback((paneId, kind) => {
+    // Read outside the updater, which React may run more than once: a counter
+    // advanced twice would skip a number, and a folder read twice is wasted
+    // work.
     const inheritedCwd = kind === 'browser' ? undefined : lastUsedTerminalCwd(panesRef.current);
+    const tab = makeTab(kind, inheritedCwd);
+    setPanes((prev) =>
+      prev.map((p) => (p.id === paneId ? { ...p, tabs: [...p.tabs, tab], activeTabId: tab.id } : p))
+    );
+    setPaneCwd(tab.id, inheritedCwd);
+  }, []);
 
-    setPanes((prev) => {
-      const index = prev.length;
-      const sessionIndex = sessionCounter;
-      sessionCounter += 1;
-      zCounter.current += 1;
+  // Dragging one session past another on the strip. The order is the user's
+  // to keep — which terminal sits where is part of how a window is read — so
+  // it is state, and it is written to the session with everything else.
+  const reorderTab = useCallback((paneId, tabId, toIndex) => {
+    setPanes((prev) =>
+      prev.map((pane) => {
+        if (pane.id !== paneId) return pane;
+        const from = pane.tabs.findIndex((t) => t.id === tabId);
+        if (from === -1 || from === toIndex) return pane;
+        const tabs = [...pane.tabs];
+        const [moved] = tabs.splice(from, 1);
+        tabs.splice(toIndex, 0, moved);
+        return { ...pane, tabs };
+      })
+    );
+  }, []);
 
-      // A small step per pane keeps successive terminals from landing exactly
-      // on top of each other; it is centred on the offset run so the group
-      // stays balanced around the middle instead of drifting off one way.
-      const step = (index % 5) - 2;
-      const offset = step * CASCADE_STEP;
+  const updateTab = useCallback((paneId, tabId, patch) => {
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === paneId
+          ? { ...p, tabs: p.tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t)) }
+          : p
+      )
+    );
+  }, []);
 
-      const size = DEFAULT_SIZE;
-
-      let x = 48 + offset;
-      let y = 48 + offset;
-      if (rect) {
-        x = (rect.width / 2 - panNow.x) / zoomNow - size.width / 2 + offset;
-        y = (rect.height / 2 - panNow.y) / zoomNow - size.height / 2 + offset;
+  const addTerminal = useCallback(
+    (kind = 'terminal') => {
+      // Aimed at the selected window when it can take this kind of session.
+      // One selected window only: with several selected there is no single
+      // answer to "which of you", and opening a new window is the honest one.
+      const selected = selectedIdsRef.current;
+      const target =
+        selected.length === 1
+          ? panesRef.current.find((p) => p.id === selected[0] && p.kind === kind)
+          : null;
+      if (target) {
+        addTab(target.id, kind);
+        return;
       }
 
-      const pane = {
-        id,
-        x,
-        y,
-        width: size.width,
-        height: size.height,
-        z: zCounter.current,
-        kind,
-        initialCwd: inheritedCwd,
-        title: kind === 'browser' ? `Browser ${sessionIndex + 1}` : `Terminal ${sessionIndex + 1}`
-      };
-      setSelectedIds([id]);
-      return [...prev, pane];
-    });
+      // Read the view once, outside the updater: this converts the centre of
+      // whatever is currently on screen into canvas coordinates, so a new pane
+      // lands in front of the user wherever they have panned or zoomed to,
+      // rather than back at a fixed corner of a 6000x4000 canvas.
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const zoomNow = zoomRef.current;
+      const panNow = panRef.current;
 
-    // Published straight away so a run of new terminals opened before any of
-    // them has printed a prompt still follows the same folder, rather than the
-    // second one falling back to home.
-    setPaneCwd(id, inheritedCwd);
-  }, []);
+      // A new terminal opens where the last one you used is sitting, the way a
+      // new tab does in a terminal app: you almost always want the folder you
+      // were just working in, not the home directory. Undefined until the first
+      // session has reported a prompt, and the shell falls back to home then.
+      const inheritedCwd = kind === 'browser' ? undefined : lastUsedTerminalCwd(panesRef.current);
+      const id = nextId('pane');
+      const tab = makeTab(kind, inheritedCwd);
+
+      setPanes((prev) => {
+        const index = prev.length;
+        zCounter.current += 1;
+
+        // A small step per pane keeps successive terminals from landing exactly
+        // on top of each other; it is centred on the offset run so the group
+        // stays balanced around the middle instead of drifting off one way.
+        const step = (index % 5) - 2;
+        const offset = step * CASCADE_STEP;
+
+        const size = DEFAULT_SIZE;
+
+        let x = 48 + offset;
+        let y = 48 + offset;
+        if (rect) {
+          x = (rect.width / 2 - panNow.x) / zoomNow - size.width / 2 + offset;
+          y = (rect.height / 2 - panNow.y) / zoomNow - size.height / 2 + offset;
+        }
+
+        const pane = {
+          id,
+          x,
+          y,
+          width: size.width,
+          height: size.height,
+          z: zCounter.current,
+          kind,
+          tabs: [tab],
+          activeTabId: tab.id
+        };
+        setSelectedIds([id]);
+        return [...prev, pane];
+      });
+
+      // Published straight away so a run of new terminals opened before any of
+      // them has printed a prompt still follows the same folder, rather than the
+      // second one falling back to home.
+      setPaneCwd(tab.id, inheritedCwd);
+    },
+    [addTab]
+  );
+
+  // This workflow, as it would be written to disk. Asked for rather than
+  // published: App holds no pane state and gains none by saving — it calls
+  // this at the moment a write is due and the panes never leave this
+  // component, which is the same arrangement the title bar's buttons use.
+  //
+  // Read entirely out of refs, so it is correct whenever it is called,
+  // including mid-drag and mid-pan when React has not re-rendered yet.
+  const serialize = useCallback(
+    () => ({
+      view: { zoom: zoomRef.current, pan: { ...panRef.current } },
+      panes: panesRef.current.map((pane) => ({
+        id: pane.id,
+        kind: pane.kind === 'browser' ? 'browser' : 'terminal',
+        x: pane.x,
+        y: pane.y,
+        width: pane.width,
+        height: pane.height,
+        z: pane.z,
+        activeTabId: pane.activeTabId,
+        tabs: pane.tabs.map((tab) => {
+          const saved = {
+            id: tab.id,
+            // The session's own name, not the one it is currently wearing: a
+            // browser shows the page's title until it is renamed, and that
+            // title belongs to the page, which will supply it again on its own
+            // when the page loads back.
+            title: tab.title,
+            titleLocked: tab.titleLocked === true
+          };
+          // The live values, not the ones the tab opened with. A terminal's
+          // folder moves with every cd, and a browser's address with every
+          // link — neither is what is on the tab object.
+          if (pane.kind === 'browser') {
+            const url = getPaneUrl(tab.id);
+            if (url) saved.url = url;
+          } else {
+            const cwd = getPaneCwd(tab.id);
+            if (cwd) saved.cwd = cwd;
+            // Unlike the folder and the address, this one is not reported from
+            // inside the session: it is something the user set ON the tab, so
+            // the tab object is where it lives and where it is read from.
+            if (tab.command) saved.command = tab.command;
+          }
+          return saved;
+        })
+      })),
+      connections: connectionsRef.current
+    }),
+    []
+  );
 
   // The title bar's "new terminal" and "new browser" live outside this
   // component, so what they call has to be reachable from outside it.
+  // How many sessions in this workflow have a command in flight. Asked for
+  // rather than published, like serialize: it is read at the one moment a
+  // workflow is about to close, and pushing it up on every command would
+  // re-render App — and with it every open terminal — each time any shell in
+  // any workflow started or finished anything.
+  const runningCount = useCallback(
+    () =>
+      panesRef.current.reduce(
+        (n, pane) =>
+          pane.kind === 'browser'
+            ? n
+            : n + pane.tabs.filter((tab) => isPaneRunning(tab.id)).length,
+        0
+      ),
+    []
+  );
+
   useEffect(() => {
-    registerWorkspaceActions(workflowId, { addTerminal });
+    registerWorkspaceActions(workflowId, { addTerminal, serialize, runningCount });
     return () => unregisterWorkspaceActions(workflowId);
-  }, [workflowId, addTerminal]);
+  }, [workflowId, addTerminal, serialize, runningCount]);
+
+  // Everything that changes what this workflow *is* passes through one of
+  // these three. Pan is the exception and reports itself from commitView,
+  // because it never becomes state at all.
+  useEffect(() => {
+    onDirtyRef.current?.();
+  }, [panes, connections, zoom]);
 
   const updatePane = useCallback((id, patch) => {
     setPanes((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -974,8 +1246,74 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
   // applies to what was targeted and not to whatever happens to be selected
   // by the time it is given.
   const restoreFocusRef = useRef(null);
+
+  // Whether closing this much would interrupt anything. A terminal sitting at
+  // a prompt has nothing running in it, so closing it costs nothing and asks
+  // nothing; one with a command in flight is worth stopping for. A browser
+  // never has a process group at all, so it never answers yes.
+  const somethingIsRunning = useCallback(
+    (paneIds) =>
+      paneIds.some((id) => {
+        const pane = panesRef.current.find((p) => p.id === id);
+        if (!pane || pane.kind === 'browser') return false;
+        return pane.tabs.some((tab) => isPaneRunning(tab.id));
+      }),
+    []
+  );
+
+  // The removals themselves, with no question attached. Two callers each:
+  // the confirmation, when one was asked for, and the close paths that have
+  // nothing to ask about.
+  const removePanes = useCallback(
+    (ids) => {
+      setPanes((prev) => prev.filter((p) => !ids.includes(p.id)));
+      setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
+      pruneConnections(ids);
+    },
+    [pruneConnections]
+  );
+
+  const removeTab = useCallback((paneId, tabId) => {
+    setPanes((prev) =>
+      prev.map((pane) => {
+        if (pane.id !== paneId) return pane;
+        const index = pane.tabs.findIndex((t) => t.id === tabId);
+        const tabs = pane.tabs.filter((t) => t.id !== tabId);
+        if (!tabs.length) return pane; // guarded by closeTab; never reached
+        // The tab to its left, the way every tabbed thing does it: the
+        // neighbour you were next to, not the far end of the strip.
+        const activeTabId =
+          pane.activeTabId === tabId ? tabs[Math.max(0, index - 1)].id : pane.activeTabId;
+        return { ...pane, tabs, activeTabId };
+      })
+    );
+  }, []);
+
+  // Closing a terminal tab kills a process group exactly as closing a terminal
+  // window does, so it asks the same question. Held apart from pendingClose rather than making
+  // that state polymorphic: the pane veil, the rail's copy and the focus
+  // restore all read it, and one of them quietly mishandling a second shape is
+  // the kind of bug that only shows up mid-answer.
+  const [pendingCloseTab, setPendingCloseTab] = useState(null);
+
+  const requestCloseTab = useCallback((paneId, tabId) => {
+    setPendingCloseTab((current) => {
+      if (current) return current;
+      restoreFocusRef.current = document.activeElement;
+      document.activeElement?.blur?.();
+      return { paneId, tabId };
+    });
+  }, []);
+
   const requestClosePanes = useCallback((ids) => {
     if (ids.length === 0) return;
+    // The question exists for work in flight, so it is asked only when there
+    // is some. An idle prompt and a browser page both close on the spot: one
+    // has nothing running, the other has no process group to run anything.
+    if (!somethingIsRunning(ids)) {
+      removePanes(ids);
+      return;
+    }
     setPendingClose((current) => {
       // A question already standing owns the rail: a second × behind it must
       // not change what is about to be answered.
@@ -986,11 +1324,25 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
       document.activeElement?.blur?.();
       return ids;
     });
-  }, []);
+  }, [removePanes, somethingIsRunning]);
 
   // The × on a pane closes that pane, even when it is one of several selected:
   // the button is attached to a specific window and points at it alone.
   const closePane = useCallback((id) => requestClosePanes([id]), [requestClosePanes]);
+
+  // The × on a tab. The last tab in a box is the box: closing it leaves an
+  // empty window that could hold nothing and answer to no one, so the question
+  // asked is the one about the window.
+  const closeTab = useCallback(
+    (paneId, tabId) => {
+      const pane = panesRef.current.find((p) => p.id === paneId);
+      if (!pane) return;
+      if (pane.tabs.length <= 1) requestClosePanes([paneId]);
+      else if (isPaneRunning(tabId)) requestCloseTab(paneId, tabId);
+      else removeTab(paneId, tabId);
+    },
+    [requestClosePanes, requestCloseTab, removeTab]
+  );
 
   // ⌘W closes the current selection rather than the window.
   const onRequestCloseRef = useRef(onRequestClose);
@@ -998,49 +1350,70 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
 
   const closeSelected = useCallback(() => {
     const ids = selectedIdsRef.current;
-    // Nothing selected means ⌘W is aimed at the workflow itself: close the
-    // innermost thing that is actually targeted, and fall outward when
-    // nothing inside is.
+    // ⌘W always closes the innermost thing that is actually targeted, and
+    // falls outward when nothing inside is: the tab in front, then the window
+    // holding it, then the workflow holding that.
     if (ids.length === 0) {
       onRequestCloseRef.current?.();
       return;
     }
+    if (ids.length === 1) {
+      const pane = panesRef.current.find((p) => p.id === ids[0]);
+      // Several tabs in the box means the box is not what is aimed at. With
+      // one tab left there is nothing between the key and the window.
+      if (pane && pane.tabs.length > 1) {
+        if (isPaneRunning(pane.activeTabId)) requestCloseTab(pane.id, pane.activeTabId);
+        else removeTab(pane.id, pane.activeTabId);
+        return;
+      }
+    }
+    // Several windows selected: ⌘W means all of them, as it always has. Three
+    // separate tabs vanishing out of three boxes is not what that gesture has
+    // ever asked for.
     requestClosePanes(ids);
-  }, [requestClosePanes]);
+  }, [requestClosePanes, requestCloseTab, removeTab]);
 
   const cancelClose = useCallback(() => {
     setPendingClose(null);
+    setPendingCloseTab(null);
     const el = restoreFocusRef.current;
     restoreFocusRef.current = null;
     if (el && el.isConnected) el.focus?.();
   }, []);
 
-  const confirmClose = useCallback(() => {
-    setPendingClose((ids) => {
-      if (ids) {
-        setPanes((prev) => prev.filter((p) => !ids.includes(p.id)));
-        setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
-        pruneConnections(ids);
-      }
+  const confirmCloseTab = useCallback(() => {
+    setPendingCloseTab((target) => {
+      if (target) removeTab(target.paneId, target.tabId);
       return null;
     });
     restoreFocusRef.current = null;
-  }, [pruneConnections]);
+  }, [removeTab]);
 
+  const confirmClose = useCallback(() => {
+    setPendingClose((ids) => {
+      if (ids) removePanes(ids);
+      return null;
+    });
+    restoreFocusRef.current = null;
+  }, [removePanes]);
+
+  // One question stands at a time, whichever it is, and the same two keys
+  // answer it.
   useEffect(() => {
-    if (!pendingClose || !active) return undefined;
+    if ((!pendingClose && !pendingCloseTab) || !active) return undefined;
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         cancelClose();
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        confirmClose();
+        if (pendingCloseTab) confirmCloseTab();
+        else confirmClose();
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [pendingClose, active, cancelClose, confirmClose]);
+  }, [pendingClose, pendingCloseTab, active, cancelClose, confirmClose, confirmCloseTab]);
 
   // Clicking an unselected pane selects just it; clicking one already inside
   // a multi-selection keeps the whole group intact (so it can be dragged
@@ -1252,8 +1625,16 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
               focused={selectionCount === 1 && selectedIds[0] === pane.id}
               selected={selectedIds.includes(pane.id)}
               pendingClose={pendingClose?.includes(pane.id) ?? false}
+              pendingCloseTabId={
+                pendingCloseTab?.paneId === pane.id ? pendingCloseTab.tabId : null
+              }
               theme={theme}
               onChange={(patch) => updatePane(pane.id, patch)}
+              onTabChange={(tabId, patch) => updateTab(pane.id, tabId, patch)}
+              onTabSelect={(tabId) => selectTab(pane.id, tabId)}
+              onTabReorder={(tabId, toIndex) => reorderTab(pane.id, tabId, toIndex)}
+              onTabClose={(tabId) => closeTab(pane.id, tabId)}
+              onTabAdd={() => addTab(pane.id, pane.kind)}
               onClose={() => closePane(pane.id)}
               onSelect={(shift) => selectPane(pane.id, shift)}
               onGroupDragStart={(pos) => beginGroupDrag(pane.id, pos)}
@@ -1352,18 +1733,35 @@ export default function Workspace({ workflowId, theme, active, onRequestClose, o
             are marked in place, and only the question and its two answers sit
             on top, on a rail along the bottom of the workspace. You confirm
             while still looking at exactly what you are confirming. */}
-        {pendingClose && (
+        {(pendingClose || pendingCloseTab) && (
           <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Confirm close">
-            <span className="confirm-rail-count">{pendingClose.length}</span>
+            <span className="confirm-rail-count">{pendingClose ? pendingClose.length : 1}</span>
             <div className="confirm-rail-copy">
-              <strong>{pendingClose.length === 1 ? 'pane will close' : 'panes will close'}</strong>
-              <span>anything running in them is terminated</span>
+              <strong>
+                {pendingCloseTab
+                  ? 'tab will close'
+                  : pendingClose.length === 1
+                    ? 'pane will close'
+                    : 'panes will close'}
+              </strong>
+              {/* The question is only asked when something is actually
+                  running, so it says so plainly rather than hedging about what
+                  might be in there. */}
+              <span>
+                {pendingCloseTab
+                  ? 'a command is running in it'
+                  : 'commands are running in them'}
+              </span>
             </div>
             <div className="confirm-rail-actions">
               <button type="button" className="confirm-cancel" onClick={cancelClose}>
                 Cancel <Shortcut id="cancel" />
               </button>
-              <button type="button" className="confirm-accept" onClick={confirmClose}>
+              <button
+                type="button"
+                className="confirm-accept"
+                onClick={pendingCloseTab ? confirmCloseTab : confirmClose}
+              >
                 Close <Shortcut id="confirm" />
               </button>
             </div>

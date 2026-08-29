@@ -125,11 +125,15 @@ export default function PaneDock({
           {panes.map((pane) => {
             const isFocused = pane.id === focusedId;
             const isSelected = selectedIds.includes(pane.id);
-            const label = getPaneTitle(pane.id) ?? pane.title;
+            // A window is named by the session in front of it, the way a
+            // browser's window is named by its active tab.
+            const activeTab =
+              pane.tabs.find((t) => t.id === pane.activeTabId) ?? pane.tabs[0];
+            const label = getPaneTitle(activeTab.id) ?? activeTab.title;
             // A derived name is two facts — the folder, and the branch it is on
             // — so it is set as two, with the arrow between them quietest of
             // all. A name the user typed is one fact and stays one string.
-            const [folder, branch] = pane.titleLocked ? [label] : label.split(' -> ');
+            const [folder, branch] = activeTab.titleLocked ? [label] : label.split(' -> ');
 
             return (
               // The name and the × are two separate actions, so they are two

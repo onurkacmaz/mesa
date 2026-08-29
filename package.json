@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite\" \"wait-on tcp:5173 && ELECTRON_START_URL=http://localhost:5173 electron .\"",
     "build": "vite build",
+    "test": "node --test 'test/*.test.mjs'",
     "start": "electron .",
     "icon": "electron scripts/render-icon.js",
     "dist": "vite build && electron-builder --mac dmg",

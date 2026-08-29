@@ -14,7 +14,11 @@
 
 export const SHORTCUTS = {
   newWorkflow: { keys: '⌘T', label: 'New workflow' },
-  switchWorkflow: { keys: '⌘1–9', label: 'Switch workflow' },
+  // ⌘1-9 belongs to the sessions inside a window, the way it does in every
+  // tabbed thing; the workflow rail is a level up and takes the modifier that
+  // says so. Not ⌃1-9: macOS gives those to Mission Control's desktops.
+  switchWorkflow: { keys: '⌥⌘1–9', label: 'Switch workflow' },
+  switchTab: { keys: '⌘1–9', label: 'Switch tab' },
   newTerminal: { keys: '⌘N', label: 'New terminal' },
   newBrowser: { keys: '⌘B', label: 'New browser' },
   closeSelection: { keys: '⌘W', label: 'Close selection' },

@@ -752,6 +752,245 @@ button:focus-visible {
   color: var(--text-strong);
 }
 
+/* The strip of sessions inside one window. It only exists when there is more
+   than one, and it borrows the language of the workflow rail above: one length
+   of material with the sessions scored into it by cuts, the one in front held
+   a tone forward. It is NOT that rail — the travelling mark belongs to the
+   window's own title bar and stays the single one in the app. */
+.pane-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 29px;
+  flex: 0 0 auto;
+  background: var(--titlebar-bottom);
+  border-bottom: 1px solid var(--titlebar-edge);
+  padding: 0 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  user-select: none;
+}
+
+.pane-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.pane-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  max-width: 220px;
+  flex: 0 1 auto;
+  min-width: 0;
+  cursor: pointer;
+  color: var(--text-faint);
+  transition: color 100ms ease, background 100ms ease;
+}
+
+.pane-tab:hover {
+  color: var(--text-mid);
+}
+
+/* The session in front, carrying the colour of the screen below it: the tab
+   and what it shows are one surface, and the ones behind it are still on the
+   strip's own material. Taking the frame's tone instead read as almost nothing
+   on paper, where the frame and the strip are within a hair of each other. */
+.pane-tab-on {
+  background: var(--pane-screen);
+  box-shadow: inset 0 1px 0 var(--pane-lip);
+  color: var(--text-strong);
+}
+
+/* A session whose process is gone. The strip says so by going quiet rather
+   than by adding a mark: there is nothing to act on, only something to know. */
+.pane-tab-exited .pane-tab-label {
+  color: var(--text-ghost);
+}
+
+/* The one under the hand. It does not lift or tilt — it is simply the tab you
+   are holding, and the strip rearranging around it is the whole feedback. */
+.pane-tab-dragging {
+  cursor: grabbing;
+  color: var(--text-strong);
+}
+
+.pane-tab-pending {
+  color: var(--danger-text);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.pane-tab-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The score between two sessions, matching the cuts on the workflow rail. */
+.pane-tab-cut {
+  width: 1px;
+  align-self: center;
+  height: 12px;
+  flex: 0 0 auto;
+  background: var(--border-soft);
+}
+
+/* The same glyph at the same size as every other × in the app, in a target
+   big enough to hit. A smaller one for the strip was a second set of metrics
+   for no reason, and it read as a speck. */
+.pane-tab-close,
+.pane-tab-add {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: color 100ms ease, background 100ms ease;
+}
+
+.pane-tab-close {
+  opacity: 0;
+}
+
+.pane-tab:hover .pane-tab-close,
+.pane-tab-on .pane-tab-close {
+  opacity: 1;
+}
+
+.pane-tab-close:hover,
+.pane-tab-add:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.pane-tab-add {
+  align-self: center;
+  margin-left: 4px;
+}
+
+/* One session's view. Fills what is left of the box under the title row and
+   the strip; the hidden ones are display:none, so nothing behind the front
+   one can be found under the cursor. */
+.pane-tab-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The startup command lives behind one mark on the title row. The anchor is
+   only here to hang the panel off; it takes no room of its own. */
+.pane-command-anchor {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+}
+
+/* Same button as the close, and deliberately so: they sit next to each other
+   and a second set of metrics on one row would read as two toolbars. */
+.pane-command {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.pane:hover .pane-command,
+.pane-focused .pane-command,
+.pane-selected .pane-command {
+  opacity: 1;
+}
+
+/* A pane that opens with something says so by keeping its mark: the tone is
+   the whole message, so the command itself never has to be printed on a row
+   that already carries a name and a path. */
+.pane-command-set,
+.pane-command-open {
+  opacity: 1;
+  color: var(--text-dim);
+}
+
+.pane-command:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+/* Hung under the title row, aligned to the mark that opened it. The screen
+   colour rather than the frame's: this belongs to the session, and reads as a
+   drawer pulled out of the pane rather than a card floated over it. Depth
+   comes from the surface stepping down and a lit top lip, the way every other
+   edge in this app is made — no drawn outline, no shadow bloom. */
+.pane-command-panel {
+  position: absolute;
+  top: calc(100% + 1px);
+  right: -4px;
+  z-index: 30;
+  width: 320px;
+  padding: 9px 10px 10px;
+  /* The frame's own material, pulled a step toward the canvas so it separates
+     from the screen in BOTH themes: on paper the screen is pure white and the
+     frame all but matches it, in the dark the screen is the deeper of the two.
+     Mixing toward the canvas moves it the correct way on either side. */
+  background: color-mix(in srgb, var(--pane-frame) 88%, var(--bg-canvas));
+  border: 1px solid var(--pane-border);
+  /* A lit top lip, then one tight shadow cast straight down — the drawer is
+     under the title row and the light in this app comes from above. Not a
+     bloom on every side. */
+  box-shadow: inset 0 1px 0 var(--pane-lip), 0 2px 5px rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  cursor: default;
+}
+
+/* Sentence case, plainly set. Every other small label in this app wears its
+   own treatment rather than one shared costume of tracked-out caps. */
+.pane-command-label {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+
+/* Mono because a command genuinely is data — the same reason the path beside
+   the title is mono, and the reason nothing else up here is. */
+.pane-command-input {
+  font-family: 'SF Mono', Menlo, ui-monospace, monospace;
+  font-size: 11.5px;
+  background: var(--pane-screen);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+  padding: 5px 7px;
+  outline: none;
+}
+
+/* The field opens focused, so this is what tells you the caret is in it
+   rather than somewhere else on the canvas: the edge comes up a step. No ring,
+   no glow. */
+.pane-command-input:focus {
+  border-color: var(--text-ghost);
+}
+
+.pane-command-input::placeholder {
+  color: var(--text-ghost);
+}
+
 /* All open sessions share this box. The screen sits below the frame's
    surface: an inner lip along the top does the work that a drawn border would
    only fake. */

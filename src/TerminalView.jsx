@@ -13,10 +13,36 @@ import { OSC_ST, hexToOscRgb, oscPaletteColor, parseOscColor, terminalThemeName 
 // left running. Inactive views stay laid out at full size and are hidden with
 // visibility rather than display:none, so their row count never goes stale
 // while they are off screen.
-export default function TerminalView({ tabId, initialCwd, accent, theme, scale, active, focused, onStatus }) {
+// How long the shell has to go quiet before a startup command is typed, for
+// shells that do not speak OSC 133. Long enough that a slow login profile's
+// own output keeps pushing it back, short enough that it does not read as the
+// app hesitating.
+const STARTUP_QUIET_MS = 700;
+
+export default function TerminalView({
+  tabId,
+  initialCwd,
+  startupCommand,
+  accent,
+  theme,
+  scale,
+  active,
+  focused,
+  onStatus
+}) {
   const hostRef = useRef(null);
   const termRef = useRef(null);
   const fitRef = useRef(null);
+
+  // The pane's startup command, caught at mount and never followed after
+  // that. Editing it later is a change to what this pane opens with NEXT
+  // time — typing into a terminal someone is already working in, because they
+  // corrected a typo in a field, would be the app taking the keyboard.
+  const startupRef = useRef(startupCommand);
+  const startupSentRef = useRef(false);
+  // Set inside the mount effect, so the OSC handler registered alongside it
+  // can reach the same one-shot without either owning the other.
+  const startupTypeRef = useRef(null);
 
   // The mount effect runs once, but the handlers it installs live for the
   // session's whole life and need current values every time they fire.
@@ -278,6 +304,9 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
       // a band across its own output — the same bug, through the other door.
       if (kind === 'A') {
         promptMarker = tuiRef.current ? null : term.registerMarker(0);
+        // A prompt is being drawn, so the shell is ready for a line: the one
+        // certain moment to lay the startup command in front of it.
+        startupTypeRef.current?.();
         return true;
       }
 
@@ -447,7 +476,38 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
       }
     });
 
-    const disposeData = window.terminalApi.onData(tabId, (data) => term.write(data));
+    // The startup command is submitted: the return goes with it, so the pane
+    // comes back doing what it was doing. Restoring a workflow starts what
+    // that workflow runs, which is the point of remembering it at all.
+    //
+    // This makes the moment it is sent matter more than it would if the line
+    // were only being typed: a line submitted before the shell is listening is
+    // lost, or worse, half of it is. The certain signal is OSC 133 A, which
+    // our zsh hook emits and other shells do not, so there is a second and
+    // weaker one for everyone else: the output going quiet. A login shell
+    // takes as long as it takes, and waiting for it to stop talking asks
+    // nothing about how long that is.
+    let startupTimer = null;
+    const typeStartup = () => {
+      if (startupTimer) {
+        clearTimeout(startupTimer);
+        startupTimer = null;
+      }
+      if (startupSentRef.current) return;
+      startupSentRef.current = true;
+      const command = startupRef.current;
+      // The return is part of the same write, so nothing can land between the
+      // line and its submission.
+      if (command) window.terminalApi.input(tabId, `${command}\r`);
+    };
+    startupTypeRef.current = typeStartup;
+
+    const disposeData = window.terminalApi.onData(tabId, (data) => {
+      term.write(data);
+      if (startupSentRef.current || !startupRef.current) return;
+      if (startupTimer) clearTimeout(startupTimer);
+      startupTimer = setTimeout(typeStartup, STARTUP_QUIET_MS);
+    });
     const disposeExit = window.terminalApi.onExit(tabId, () => {
       report({ exited: true, runningSince: null });
       term.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
@@ -456,6 +516,8 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
     term.onData((data) => window.terminalApi.input(tabId, data));
 
     return () => {
+      if (startupTimer) clearTimeout(startupTimer);
+      startupTypeRef.current = null;
       disposeData();
       disposeExit();
       oscDisposable.dispose();

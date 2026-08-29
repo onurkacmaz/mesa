@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Rnd } from 'react-rnd';
 import TerminalView from './TerminalView.jsx';
 import BrowserView, { PageMark, Throbber } from './BrowserView.jsx';
@@ -6,8 +6,12 @@ import { ACCENT } from './theme.js';
 import { setPaneGeom, deletePaneGeom } from './paneGeometry.js';
 import { setPaneTitle, deletePaneTitle } from './paneTitles.js';
 import { setPaneCwd, deletePaneCwd } from './paneCwd.js';
+import { stripControls } from './session.mjs';
+import { deletePaneUrl } from './paneUrls.js';
+import { deletePaneRunning, setPaneRunning } from './paneRunning.js';
 import { SIDES } from './Connections.jsx';
-import { CloseIcon } from './icons.jsx';
+import { CloseIcon, PlusIcon, StartupIcon } from './icons.jsx';
+import { hint } from './shortcuts.jsx';
 
 // Home-relative, and only the last two segments: the chrome wants to answer
 // "where am I" at a glance, not print an absolute path.
@@ -52,14 +56,68 @@ export function PromptMark() {
   );
 }
 
+// One session inside a box. Every tab in a pane stays mounted for as long as
+// the tab exists and only the one in front is shown — the same arrangement App
+// uses for workflows, and for the same reason: switching away from a tab must
+// not kill what is running in it. Hidden with display:none rather than
+// opacity, because a hidden-but-hittable terminal would still be found under
+// the cursor by the drag-target lookup in Workspace.
+function PaneTabView({ tab, kind, visible, theme, scale, focused, accent, onStatus }) {
+  // The registries are keyed by session, so they are cleaned up by the session
+  // that owns them — the pane cannot, because by the time it notices a tab is
+  // gone the tab is already unmounted.
+  useEffect(
+    () => () => {
+      deletePaneTitle(tab.id);
+      deletePaneCwd(tab.id);
+      deletePaneUrl(tab.id);
+      deletePaneRunning(tab.id);
+    },
+    [tab.id]
+  );
+
+  return (
+    <div className="pane-tab-view" style={visible ? undefined : { display: 'none' }}>
+      {kind === 'browser' ? (
+        <BrowserView
+          paneId={tab.id}
+          initialUrl={tab.initialUrl}
+          focused={focused && visible}
+          onStatus={onStatus}
+        />
+      ) : (
+        <div className="pane-screen">
+          <TerminalView
+            tabId={tab.id}
+            initialCwd={tab.initialCwd}
+            startupCommand={tab.command}
+            accent={accent}
+            theme={theme}
+            scale={scale}
+            active={visible}
+            focused={focused && visible}
+            onStatus={onStatus}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TerminalPane({
   pane,
   scale,
   focused,
   selected,
   pendingClose,
+  pendingCloseTabId,
   theme,
   onChange,
+  onTabChange,
+  onTabSelect,
+  onTabReorder,
+  onTabClose,
+  onTabAdd,
   onClose,
   onSelect,
   onGroupDragStart,
@@ -67,8 +125,21 @@ export default function TerminalPane({
   onGroupDragEnd,
   onPortDown
 }) {
+  const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId) ?? pane.tabs[0];
+
   const [editingTitle, setEditingTitle] = useState(false);
-  const [titleDraft, setTitleDraft] = useState(pane.title);
+  const [titleDraft, setTitleDraft] = useState(activeTab.title);
+  // The startup command field. Open is a state of this pane, not of the app:
+  // two panes can have theirs open at once and neither is modal.
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandDraft, setCommandDraft] = useState(activeTab.command ?? '');
+  const commandRef = useRef(null);
+  const stripRef = useRef(null);
+  // A tab drag in progress. Held in a ref because it changes on every pointer
+  // frame and none of it is worth a render — the only thing that renders is
+  // the order itself, and that only when the order actually changes.
+  const tabDragRef = useRef(null);
+  const [draggingTabId, setDraggingTabId] = useState(null);
 
   // The committed geometry, republished whenever React knows it changed. The
   // drag and resize handlers below publish the *uncommitted* geometry on every
@@ -81,21 +152,109 @@ export default function TerminalPane({
 
   useEffect(() => () => deletePaneGeom(pane.id), [pane.id]);
 
-  // Live session state, reported up from the view: where the shell is,
-  // whether a command is running, and how the last one ended.
-  const [status, setStatus] = useState({});
-  const handleStatus = useCallback(
-    (id, patch) => {
-      // Published as well as kept, because the next terminal to be opened
-      // starts in the folder the last used one is in — and Workspace, which
-      // creates it, never sees this status.
-      if (patch.cwd) setPaneCwd(pane.id, patch.cwd);
-      setStatus((prev) => ({ ...prev, ...patch }));
-    },
-    [pane.id]
-  );
+  // Live session state, reported up from each view: where the shell is,
+  // whether a command is running, and how the last one ended. Keyed by tab,
+  // because a box now holds several sessions and the title row speaks for
+  // whichever one is in front.
+  const [statusByTab, setStatusByTab] = useState({});
+  const handleStatus = useCallback((id, patch) => {
+    // Published as well as kept, because the next terminal to be opened starts
+    // in the folder the last used one is in — and Workspace, which creates it,
+    // never sees this status.
+    if (patch.cwd) setPaneCwd(id, patch.cwd);
+    // Published as well as kept, because what decides whether closing asks a
+    // question is Workspace, and it never sees this status.
+    if ('runningSince' in patch) setPaneRunning(id, patch.runningSince !== null);
+    setStatusByTab((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }, []);
 
-  useEffect(() => () => deletePaneCwd(pane.id), [pane.id]);
+  const status = statusByTab[activeTab.id] ?? {};
+
+  useEffect(() => {
+    if (!commandOpen) return undefined;
+    const onDown = (e) => {
+      if (!commandRef.current?.contains(e.target)) setCommandOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setCommandOpen(false);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [commandOpen]);
+
+  // Stripped on the way in as well as on the way out of the file. A single
+  // line means a single command: this field runs what is in it, and a newline
+  // that arrived with a paste would quietly make it two. Empty clears it.
+  const commitCommand = useCallback(() => {
+    const command = stripControls(commandDraft);
+    setCommandOpen(false);
+    setCommandDraft(command);
+    if (command !== (activeTab.command ?? '')) {
+      onTabChange(activeTab.id, { command: command || undefined });
+    }
+  }, [commandDraft, activeTab, onTabChange]);
+
+  // Reordering by dragging, measured against the tabs actually on screen
+  // rather than against arithmetic: the strip scrolls, tab widths follow their
+  // names, and the canvas is under a zoom. getBoundingClientRect answers all
+  // three at once, and the pointer is in the same coordinates.
+  //
+  // The order is rewritten as you cross a neighbour rather than on release, so
+  // the strip shows the arrangement you are choosing while you choose it. No
+  // ghost, no gap to animate: the real tab is the one that moves.
+  const onTabPointerDown = (e, tab) => {
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    onTabSelect(tab.id);
+    tabDragRef.current = { tabId: tab.id, startX: e.clientX, moved: false };
+    // Capture keeps the moves coming to this tab even once the pointer has
+    // left it, which is most of a drag. It is an optimisation, not the
+    // mechanism: where it is refused the strip still reorders, because the
+    // moves land on whichever tab is under the pointer and every one of them
+    // runs the same handler.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // no capture available; the drag works without it
+    }
+  };
+
+  const onTabPointerMove = (e) => {
+    const drag = tabDragRef.current;
+    if (!drag) return;
+    // A few pixels of slack, so a click that shifts slightly under the finger
+    // is still a click.
+    if (!drag.moved && Math.abs(e.clientX - drag.startX) < 4) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      setDraggingTabId(drag.tabId);
+    }
+    const els = [...(stripRef.current?.querySelectorAll('.pane-tab') ?? [])];
+    if (!els.length) return;
+    // The slot the pointer is in: the first tab whose middle it has not passed,
+    // and the end of the strip when it has passed all of them.
+    let index = els.findIndex((el) => {
+      const r = el.getBoundingClientRect();
+      return e.clientX < r.left + r.width / 2;
+    });
+    if (index === -1) index = els.length - 1;
+    onTabReorder(drag.tabId, index);
+  };
+
+  const endTabDrag = (e) => {
+    if (!tabDragRef.current) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // never captured, or already released
+    }
+    tabDragRef.current = null;
+    setDraggingTabId(null);
+  };
 
   const accent = ACCENT[theme];
 
@@ -126,40 +285,84 @@ export default function TerminalPane({
 
   // A terminal is named after the work in it, not after the order it was
   // opened in: the folder, and the branch when the folder is in a repo. Three
-  // panes called "Terminal 1/2/3" are three panes you have to click to tell
+  // sessions called "Terminal 1/2/3" are three you have to click to tell
   // apart. The stock name is only what stands there until the first prompt
   // reports where the shell actually is.
   //
-  // Renaming locks it, exactly as it does for a browser pane — once you have
-  // given a pane a name, cd'ing must not silently take it away.
-  const folder = status.cwd ? folderName(status.cwd) : null;
-  // A worktree folder almost always carries the branch's name, and in that
-  // case "HR-17123-description-fields -> HR-17123-description-fields" says the
-  // same thing twice and fills both the rail and the title bar. A branch that
-  // differs from the folder is new information and gets written; one that
-  // matches has been said already.
-  const sessionName = folder
-    ? status.branch && status.branch !== folder
-      ? `${folder} -> ${status.branch}`
-      : folder
-    : null;
+  // Renaming locks it, exactly as it does for a browser tab — once you have
+  // given a session a name, cd'ing must not silently take it away.
+  //
+  // Written as a function of a tab rather than of this pane, because the strip
+  // names every tab and the title row names the one in front: one derivation,
+  // so a tab cannot be called one thing on the strip and another above it.
+  const titleOf = useCallback(
+    (tab) => {
+      if (tab.titleLocked) return tab.title;
+      const tabStatus = statusByTab[tab.id] ?? {};
+      if (isBrowser) return tabStatus.pageTitle ?? tab.title;
+      const folder = tabStatus.cwd ? folderName(tabStatus.cwd) : null;
+      if (!folder) return tab.title;
+      // A worktree folder almost always carries the branch's name, and in that
+      // case "HR-17123-description-fields -> HR-17123-description-fields" says
+      // the same thing twice and fills both the rail and the title bar. A
+      // branch that differs from the folder is new information and gets
+      // written; one that matches has been said already.
+      return tabStatus.branch && tabStatus.branch !== folder
+        ? `${folder} -> ${tabStatus.branch}`
+        : folder;
+    },
+    [isBrowser, statusByTab]
+  );
 
-  const displayTitle = pane.titleLocked
-    ? pane.title
-    : (isBrowser ? status.pageTitle : sessionName) ?? pane.title;
+  const displayTitle = titleOf(activeTab);
+
+  // Names on the strip are made distinct before they are printed. Three
+  // terminals opened in one folder are all called after that folder, and three
+  // tabs reading "mesa" side by side name nothing — the strip exists to tell
+  // them apart. Numbered only where there is a clash, so the ordinary case of
+  // differently-named tabs stays clean.
+  //
+  // Numbered by WHEN the session was opened, never by where it currently sits.
+  // Numbering by position would rename a tab the moment you dragged it — pick
+  // up "mesa 3", drop it at the front, and it is suddenly "mesa 1" — which
+  // takes away the one thing the number was there to give: a name that stays
+  // put. Tab ids are handed out in order, so they are that record.
+  const stripLabels = useMemo(() => {
+    const openedAt = (id) => Number(/-(\d+)$/.exec(id)?.[1] ?? 0);
+    const counts = new Map();
+    for (const tab of pane.tabs) {
+      const name = titleOf(tab);
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const nth = new Map();
+    const seen = new Map();
+    for (const tab of [...pane.tabs].sort((a, b) => openedAt(a.id) - openedAt(b.id))) {
+      const name = titleOf(tab);
+      if (counts.get(name) === 1) continue;
+      const next = (seen.get(name) ?? 0) + 1;
+      seen.set(name, next);
+      nth.set(tab.id, next);
+    }
+    return new Map(
+      pane.tabs.map((tab) => {
+        const name = titleOf(tab);
+        return [tab.id, nth.has(tab.id) ? `${name} ${nth.get(tab.id)}` : name];
+      })
+    );
+  }, [pane.tabs, titleOf]);
 
   // Published so the dock can print the same name this titlebar does — for a
-  // browser that is the page's title, which only exists in here.
+  // browser that is the page's title, which only exists in here. Every tab
+  // publishes, not just the one in front: the dock names a window by whichever
+  // tab is active, and that changes without any of them remounting.
   useLayoutEffect(() => {
-    setPaneTitle(pane.id, displayTitle);
-  }, [pane.id, displayTitle]);
-
-  useEffect(() => () => deletePaneTitle(pane.id), [pane.id]);
+    for (const tab of pane.tabs) setPaneTitle(tab.id, titleOf(tab));
+  }, [pane.tabs, titleOf]);
 
   const commitTitle = () => {
     setEditingTitle(false);
     const trimmed = titleDraft.trim();
-    if (trimmed) onChange({ title: trimmed, titleLocked: true });
+    if (trimmed) onTabChange(activeTab.id, { title: trimmed, titleLocked: true });
   };
 
   // Focus and selection are tonal steps off the resting edge rather than a
@@ -308,13 +511,72 @@ export default function TerminalPane({
           </span>
         )}
 
-        {!isBrowser && status.cwd && !status.exited && (
-          <span className="pane-cwd" title={status.cwd}>
-            {shortenPath(status.cwd)}
+        {/* Always present on a terminal, even with nothing to say — an exited
+            session has no folder worth printing, but this span is also the
+            row's spring: it is what holds the status, the startup mark and the
+            close against the right edge. Dropping it on exit collapsed that
+            whole group onto the title, which took the startup panel (it hangs
+            off the mark) past the pane's left edge, where the pane clipped
+            it. */}
+        {!isBrowser && (
+          <span className="pane-cwd" title={status.cwd ?? undefined}>
+            {status.cwd && !status.exited ? shortenPath(status.cwd) : ''}
           </span>
         )}
 
         {statusNode}
+
+        {/* Terminals only: a browser pane has no prompt to put a line at, and
+            it already carries its own controls in its chrome. The mark stays
+            visible once a command is set — that tone IS the answer to "does
+            this pane start with something", so no second copy of the command
+            has to sit on a row that already has a name and a path on it. */}
+        {!isBrowser && (
+          <div className="pane-command-anchor" ref={commandRef}>
+            <button
+              type="button"
+              className={`pane-command${activeTab.command ? ' pane-command-set' : ''}${
+                commandOpen ? ' pane-command-open' : ''
+              }`}
+              onClick={() => {
+                setCommandDraft(activeTab.command ?? '');
+                setCommandOpen((open) => !open);
+              }}
+              title={activeTab.command ? `Runs on open: ${activeTab.command}` : 'Startup command'}
+              aria-label="Startup command"
+              aria-expanded={commandOpen}
+            >
+              <StartupIcon />
+            </button>
+
+            {commandOpen && (
+              <div className="pane-command-panel">
+                <label className="pane-command-label" htmlFor={`startup-${activeTab.id}`}>
+                  Runs when this tab opens.
+                </label>
+                <input
+                  id={`startup-${activeTab.id}`}
+                  autoFocus
+                  className="pane-command-input"
+                  value={commandDraft}
+                  placeholder="npm run dev"
+                  // A command is not prose: the red squiggle under every tool
+                  // name is noise, and autocorrect would quietly rewrite one.
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) => setCommandDraft(e.target.value)}
+                  onBlur={commitCommand}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitCommand();
+                    if (e.key === 'Escape') setCommandOpen(false);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           className="pane-close"
@@ -326,53 +588,78 @@ export default function TerminalPane({
         </button>
       </div>
 
-      {/* In a browser pane the chrome strip sits above the screen, not inside
-          it: the page uses the same recessed surface the terminal sits on. */}
-      {isBrowser ? (
-        <BrowserView paneId={pane.id} focused={focused} onStatus={handleStatus} />
-      ) : (
-        <div className="pane-screen">
-          <TerminalView
-            tabId={pane.id}
-            initialCwd={pane.initialCwd}
-            accent={accent}
-            theme={theme}
-            scale={scale}
-            active
-            focused={focused}
-            onStatus={handleStatus}
-          />
+      {/* The strip appears only once there is a choice to make. A window with
+          one session in it looks exactly as it always has — a row of one tab
+          would be a control that answers a question nobody asked. */}
+      {pane.tabs.length > 1 && (
+        <div className="pane-tabs" role="tablist" aria-label="Sessions" ref={stripRef}>
+          {pane.tabs.map((tab, index) => (
+            <React.Fragment key={tab.id}>
+              {/* A cut between tabs, not a border around them: the strip is
+                  one length of material with the sessions scored into it. */}
+              {index > 0 && <span className="pane-tab-cut" aria-hidden="true" />}
+              <div
+                role="tab"
+                aria-selected={tab.id === pane.activeTabId}
+                className={`pane-tab${tab.id === pane.activeTabId ? ' pane-tab-on' : ''}${
+                  tab.id === pendingCloseTabId ? ' pane-tab-pending' : ''
+                }${statusByTab[tab.id]?.exited ? ' pane-tab-exited' : ''}${
+                  tab.id === draggingTabId ? ' pane-tab-dragging' : ''
+                }`}
+                onPointerDown={(e) => onTabPointerDown(e, tab)}
+                onPointerMove={onTabPointerMove}
+                onPointerUp={endTabDrag}
+                onPointerCancel={endTabDrag}
+              >
+                <span className="pane-tab-label">{stripLabels.get(tab.id)}</span>
+                <button
+                  type="button"
+                  className="pane-tab-close"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTabClose(tab.id);
+                  }}
+                  aria-label={`Close ${stripLabels.get(tab.id)}`}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            </React.Fragment>
+          ))}
+          <button
+            type="button"
+            className="pane-tab-add"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onTabAdd();
+            }}
+            title={hint(isBrowser ? 'newBrowser' : 'newTerminal')}
+            aria-label="New tab"
+          >
+            <PlusIcon />
+          </button>
         </div>
       )}
 
-      {/* Connection ports. Square marks flush against the inside of the 1px
-          border — .pane is overflow:hidden, so anything hung outside the edge
-          would simply be cropped away. They read as tabs cut into the frame
-          rather than as handles stuck onto it, which is the only form the
-          house rule at the top of styles.css allows: nothing is rounded, so
-          there are no dots here. */}
-      {SIDES.map((side) => (
-        <span
-          key={side}
-          className={`pane-port pane-port-${side}`}
-          onMouseDown={(e) => {
-            // Left button only. The middle button is the canvas pan modifier
-            // and the right one opens a context menu; neither should be able
-            // to start pulling a rope.
-            if (e.button !== 0) return;
-            // Both are load-bearing: stopPropagation keeps Rnd's own
-            // onMouseDown from selecting (and raising) the pane, preventDefault
-            // keeps the browser from starting a text-selection drag that would
-            // fight the gesture the whole way across the canvas.
-            e.stopPropagation();
-            e.preventDefault();
-            onPortDown?.(side, e);
-          }}
-          aria-hidden="true"
+      {/* Every tab stays mounted; only the one in front is shown. Switching
+          tabs must never kill what is running in the one you left, which is
+          the same rule that keeps a workflow's terminals alive while you work
+          in another workflow. */}
+      {pane.tabs.map((tab) => (
+        <PaneTabView
+          key={tab.id}
+          tab={tab}
+          kind={pane.kind}
+          visible={tab.id === activeTab.id}
+          theme={theme}
+          scale={scale}
+          focused={focused}
+          accent={accent}
+          onStatus={handleStatus}
         />
       ))}
-
-      {pendingClose && <div className="pane-close-veil" aria-hidden="true" />}
     </Rnd>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { GUEST_FULLSCREEN_SHIM } from './guestFullscreen.js';
+import { setPaneUrl } from './paneUrls.js';
 
 // A browser pane, whole: Chromium's toolbar plus the screen the page sits on.
 // This strip is deliberately outside the app's own square language — it is
@@ -127,7 +128,7 @@ export function Throbber() {
   );
 }
 
-export default function BrowserView({ paneId, focused, onStatus }) {
+export default function BrowserView({ paneId, initialUrl, focused, onStatus }) {
   const hostRef = useRef(null);
   const readyRef = useRef(false);
   const inputRef = useRef(null);
@@ -136,8 +137,12 @@ export default function BrowserView({ paneId, focused, onStatus }) {
   // Empty address, empty page. about:blank is an absence rather than an
   // address, so it is held that way in state too: the address bar shows its
   // placeholder and the app's own surface covers the screen.
-  const [url, setUrl] = useState('');
-  const [draft, setDraft] = useState('');
+  //
+  // A restored pane starts on the address it was left on. Seeded rather than
+  // followed: the prop is where this pane opens, not something it stays tied
+  // to — every navigation after the first belongs to the guest.
+  const [url, setUrl] = useState(() => initialUrl ?? '');
+  const [draft, setDraft] = useState(() => initialUrl ?? '');
   const [editing, setEditing] = useState(false);
   // about:blank has nothing to load, so it does not open on a throbber.
   const [loading, setLoading] = useState(false);
@@ -191,6 +196,10 @@ export default function BrowserView({ paneId, focused, onStatus }) {
         setUrl(shown);
         setEditing(false);
         setDraft(shown);
+        // Published as well as kept, for the same reason a terminal publishes
+        // its folder: the session is written by Workspace, which never sees
+        // inside a guest.
+        setPaneUrl(paneId, shown);
       }
       setError(null);
       syncNav();
@@ -200,6 +209,7 @@ export default function BrowserView({ paneId, focused, onStatus }) {
         const shown = e.url === BROWSER_HOME ? '' : e.url;
         setUrl(shown);
         setDraft(shown);
+        setPaneUrl(paneId, shown);
       }
       syncNav();
     };
@@ -477,7 +487,12 @@ export default function BrowserView({ paneId, focused, onStatus }) {
       </div>
 
       <div className="pane-screen browser-screen">
-        <webview ref={hostRef} src={BROWSER_HOME} useragent={CHROME_UA} className="browser-webview" />
+        <webview
+          ref={hostRef}
+          src={initialUrl || BROWSER_HOME}
+          useragent={CHROME_UA}
+          className="browser-webview"
+        />
         {/* Chromium paints about:blank white, which leaves a rectangle glaring
             inside the pane in the dark theme. The blank page is covered with
             the app's own screen surface: genuinely empty, and the right
