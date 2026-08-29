@@ -1,9 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { CanvasAddon } from '@xterm/addon-canvas';
 import '@xterm/xterm/css/xterm.css';
 import { registerTerminal, unregisterTerminal } from './terminalRegistry.js';
 import { COMMAND_ROW_BG, COMMAND_RULE, DANGER, TERMINAL_THEMES } from './theme.js';
+import { OSC_ST, hexToOscRgb, oscPaletteColor, parseOscColor, terminalThemeName } from './terminalOsc.mjs';
 
 // One live session: an xterm instance bound to one pty. Every open tab keeps
 // its own mounted instance, including the ones you cannot see — that is the
@@ -27,6 +29,8 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
   const draggingRef = useRef(false);
+  const tuiRef = useRef(false);
+  const repaintBlocksRef = useRef(null);
 
   useEffect(() => {
     const report = (patch) => onStatusRef.current?.(tabId, patch);
@@ -47,11 +51,47 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
       lineHeight: 1.45,
       letterSpacing: 0,
       scrollback: 10000,
-      theme: { ...TERMINAL_THEMES[theme], cursor: accent }
+      theme: { ...TERMINAL_THEMES[terminalThemeName(theme)], cursor: accent }
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current);
+
+    // The canvas renderer, not xterm's default DOM one. This is what makes a
+    // full-screen TUI — OpenCode, Claude Code, vim — look like it does in a
+    // native terminal instead of shredded.
+    //
+    // The DOM renderer draws every cell as a text span and leans on the font
+    // for box-drawing and block characters (█ ▀ ▄ ─ │ ┌). Those glyphs only
+    // tile seamlessly when a cell lands on a whole pixel, and on this canvas
+    // a pane is displayed through transform: scale(zoom) — so at any zoom but
+    // 100% every block glyph is rasterised at a fractional offset and hairline
+    // gaps open between them. Measured at 161%: OpenCode's block-letter logo
+    // came out sliced by white seams and the prompt box lost its borders.
+    // Warp has no such seams because it draws those glyphs itself.
+    //
+    // The canvas renderer does the same: box and block characters are drawn as
+    // cell-exact vectors rather than looked up in the font, so they meet
+    // perfectly at every zoom. Type goes very slightly soft above 100% — the
+    // canvas bitmap is scaled rather than re-rasterised — which is a small
+    // price against losing the glyphs entirely.
+    //
+    // Canvas rather than WebGL deliberately: every open tab keeps a live
+    // terminal, including the ones you cannot see, and WebGL contexts are
+    // capped per document (~16 in Chromium) with the oldest silently dropped —
+    // which would show up as an old pane going blank rather than as anything
+    // that reads like a rendering bug. A 2D context is under no such cap;
+    // eight panes on a 2× display all kept drawing. It is not free either:
+    // each terminal holds four full-size layers, so a large pane on a retina
+    // display costs tens of megabytes of backing store.
+    try {
+      term.loadAddon(new CanvasAddon());
+    } catch (err) {
+      // Falls back to the DOM renderer, which still works — just with the
+      // seams above. Better than a pane that fails to open.
+      console.warn('canvas renderer unavailable, falling back to DOM', err);
+    }
+
     fit.fit();
 
     termRef.current = term;
@@ -135,6 +175,87 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
     });
     resizeObserver.observe(hostRef.current);
 
+    // ── Command blocks, and why they are held rather than just drawn ────────
+    //
+    // Every block is kept as a marker plus the recipe for painting it, not as
+    // a live decoration, because a decoration cannot stay up while a
+    // full-screen TUI is running. xterm draws a decoration from its marker's
+    // row without asking which buffer that row belongs to, so the blocks built
+    // on the normal screen went on painting straight through OpenCode's
+    // alternate screen: bands of lit rows and hairline rules laid across the
+    // TUI's own output, at the normal screen's taller row height. That is the
+    // striping in the report, and it is the renderer's cell background rather
+    // than an element on top, so it cannot be hidden with CSS — the decoration
+    // has to come down and go back up.
+    //
+    // A block stores its ROLE, never a colour: which row it marks and whether
+    // the command succeeded. The colour is resolved from the live theme every
+    // time it is painted, so switching to the light theme repaints the whole
+    // scrollback with it. Storing the colour instead left every block that had
+    // been made in the dark theme sitting as a black band on the light screen,
+    // with its own command text unreadable inside it.
+    const blocks = [];
+    let painted = [];
+
+    const paintBlock = (block) => {
+      const activeTheme = themeRef.current;
+
+      if (block.kind === 'row') {
+        return term.registerDecoration({
+          marker: block.marker,
+          x: 0,
+          width: term.cols,
+          layer: 'bottom',
+          backgroundColor: COMMAND_ROW_BG[activeTheme]
+        });
+      }
+
+      const tick = block.ok ? accentRef.current : DANGER[activeTheme];
+      const rule = block.ok
+        ? COMMAND_RULE[activeTheme]
+        : `color-mix(in srgb, ${DANGER[activeTheme]} 40%, transparent)`;
+      const decoration = term.registerDecoration({ marker: block.marker, x: 0, width: term.cols });
+      decoration?.onRender((el) => {
+        el.style.backgroundImage = `linear-gradient(to right, ${tick} 0 14px, ${rule} 14px, ${rule} 62%, transparent 92%)`;
+        el.style.backgroundSize = '100% 1px';
+        el.style.backgroundRepeat = 'no-repeat';
+        el.style.backgroundPosition = '0 0';
+      });
+      return decoration;
+    };
+
+    const unmountBlocks = () => {
+      painted.forEach((decoration) => decoration.dispose());
+      painted = [];
+    };
+
+    // Takes everything down first, so calling this twice cannot end up with
+    // two decorations stacked on the same row.
+    const mountBlocks = () => {
+      unmountBlocks();
+      // Walked backwards so a block whose marker has fallen out of scrollback
+      // can be dropped in place — registerDecoration answers undefined for a
+      // disposed marker, which is the only signal that the row is gone.
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const decoration = paintBlock(blocks[i]);
+        if (decoration) painted.push(decoration);
+        else blocks.splice(i, 1);
+      }
+    };
+
+    const addBlock = (block) => {
+      blocks.push(block);
+      const decoration = paintBlock(block);
+      if (decoration) painted.push(decoration);
+    };
+
+    // Handed out so the theme effect below can repaint the scrollback. It is a
+    // no-op while a TUI holds the screen: the blocks are deliberately down
+    // then, and remounting would put them straight back over the TUI.
+    repaintBlocksRef.current = () => {
+      if (!tuiRef.current) mountBlocks();
+    };
+
     // OSC 133 semantic-prompt markers, emitted by our zsh hook (see
     // electron/shell-hooks/zsh/.zshenv):
     //   A = prompt start, C = command started (preexec),
@@ -151,8 +272,12 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
 
       // A marks the row the prompt is about to be drawn on. Holding on to it
       // lets us tint that row once we know a command was actually submitted.
+      //
+      // Nothing is marked while a TUI owns the screen. A TUI that speaks OSC
+      // 133 itself would otherwise mark a row of the alternate buffer and lay
+      // a band across its own output — the same bug, through the other door.
       if (kind === 'A') {
-        promptMarker = term.registerMarker(0);
+        promptMarker = tuiRef.current ? null : term.registerMarker(0);
         return true;
       }
 
@@ -165,13 +290,7 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
         // xterm's own backgroundColor decoration, which paints the cell
         // background beneath the glyphs rather than an element over them.
         if (promptMarker) {
-          term.registerDecoration({
-            marker: promptMarker,
-            x: 0,
-            width: term.cols,
-            layer: 'bottom',
-            backgroundColor: COMMAND_ROW_BG[themeRef.current]
-          });
+          addBlock({ marker: promptMarker, kind: 'row' });
           promptMarker = null;
         }
         return true;
@@ -191,21 +310,10 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
       // output. It is an index mark rather than an edge-to-edge line: a short
       // solid tick in the session's own tint (or the failure red), then a
       // hairline that fades out well before the right edge.
+      if (tuiRef.current) return true;
       const marker = term.registerMarker(0);
       if (!marker) return true;
-      const activeTheme = themeRef.current;
-      const tick = exitCode === 0 ? accentRef.current : DANGER[activeTheme];
-      const rule =
-        exitCode === 0
-          ? COMMAND_RULE[activeTheme]
-          : `color-mix(in srgb, ${DANGER[activeTheme]} 40%, transparent)`;
-      const decoration = term.registerDecoration({ marker, x: 0, width: term.cols });
-      decoration?.onRender((el) => {
-        el.style.backgroundImage = `linear-gradient(to right, ${tick} 0 14px, ${rule} 14px, ${rule} 62%, transparent 92%)`;
-        el.style.backgroundSize = '100% 1px';
-        el.style.backgroundRepeat = 'no-repeat';
-        el.style.backgroundPosition = '0 0';
-      });
+      addBlock({ marker, kind: 'rule', ok: exitCode === 0 });
       return true;
     });
 
@@ -237,6 +345,81 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
         })
         .catch(() => {});
     };
+
+    // OSC 4/10/11 theme queries and dynamic fg/bg updates (OpenTUI, etc.).
+    let fgOverride = null;
+    let bgOverride = null;
+
+    const baseTheme = () => TERMINAL_THEMES[terminalThemeName(themeRef.current)];
+
+    const applyTheme = () => {
+      const base = baseTheme();
+      term.options.theme = {
+        ...base,
+        foreground: fgOverride ?? base.foreground,
+        background: bgOverride ?? base.background,
+        cursor: accentRef.current
+      };
+    };
+
+    const replyOsc = (code, payload) => {
+      queueMicrotask(() => window.terminalApi.input(tabId, `\x1b]${code};${payload}${OSC_ST}`));
+    };
+
+    const handleOscColor = (code, data, kind) => {
+      if (data === '?' || data.startsWith('?')) {
+        const hex = kind === 'fg' ? (fgOverride ?? baseTheme().foreground) : (bgOverride ?? baseTheme().background);
+        replyOsc(code, hexToOscRgb(hex));
+        return true;
+      }
+      const parsed = parseOscColor(data);
+      if (!parsed) return true;
+      if (kind === 'fg') fgOverride = parsed;
+      else bgOverride = parsed;
+      applyTheme();
+      return true;
+    };
+
+    const oscPaletteDisposable = term.parser.registerOscHandler(4, (data) => {
+      const [index, action] = data.split(';');
+      if (action !== '?' && !action?.startsWith('?')) return true;
+      const hex = oscPaletteColor(baseTheme(), index);
+      if (hex) replyOsc(4, `${index};${hexToOscRgb(hex)}`);
+      return true;
+    });
+    const oscFgDisposable = term.parser.registerOscHandler(10, (data) => handleOscColor(10, data, 'fg'));
+    const oscBgDisposable = term.parser.registerOscHandler(11, (data) => handleOscColor(11, data, 'bg'));
+    const oscFgResetDisposable = term.parser.registerOscHandler(110, () => {
+      fgOverride = null;
+      applyTheme();
+      return true;
+    });
+    const oscBgResetDisposable = term.parser.registerOscHandler(111, () => {
+      bgOverride = null;
+      applyTheme();
+      return true;
+    });
+
+    // Alternate-screen TUIs (OpenCode, vim, htop) need tight cell metrics and
+    // no inner gutter — block glyphs and full-bleed layouts misalign otherwise.
+    const applyTuiLayout = (isAlt) => {
+      tuiRef.current = isAlt;
+      report({ tui: isAlt });
+      hostRef.current?.classList.toggle('pane-body-tui', isAlt);
+      // The shell's command blocks belong to the normal screen and would
+      // otherwise keep painting over the TUI (see the block store above).
+      if (isAlt) unmountBlocks();
+      else mountBlocks();
+      term.options.lineHeight = isAlt ? 1 : 1.45;
+      term.options.fontWeight = isAlt ? 'normal' : 450;
+      applyTheme();
+      fit.fit();
+      window.terminalApi.resize(tabId, term.cols, term.rows);
+    };
+    const bufferDisposable = term.buffer.onBufferChange((buffer) => {
+      applyTuiLayout(buffer.type === 'alternate');
+    });
+    applyTuiLayout(term.buffer.active.type === 'alternate');
 
     const oscCwdDisposable = term.parser.registerOscHandler(7, (data) => {
       const match = /^file:\/\/[^/]*(\/.*)$/.exec(data);
@@ -276,6 +459,12 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
       disposeData();
       disposeExit();
       oscDisposable.dispose();
+      oscPaletteDisposable.dispose();
+      oscFgDisposable.dispose();
+      oscBgDisposable.dispose();
+      oscFgResetDisposable.dispose();
+      oscBgResetDisposable.dispose();
+      bufferDisposable.dispose();
       oscCwdDisposable.dispose();
       csiEraseDisplay.dispose();
       resizeObserver.disconnect();
@@ -392,7 +581,29 @@ export default function TerminalView({ tabId, initialCwd, accent, theme, scale, 
   // untouched.
   useEffect(() => {
     const term = termRef.current;
-    if (term) term.options.theme = { ...TERMINAL_THEMES[theme], cursor: accent };
+    if (!term) return;
+    // Palette swap from the chrome — preserve any OSC overrides a running TUI set.
+    const base = TERMINAL_THEMES[terminalThemeName(theme)];
+    const current = term.options.theme;
+    term.options.theme = {
+      ...base,
+      foreground: current.foreground !== TERMINAL_THEMES.dark.foreground &&
+        current.foreground !== TERMINAL_THEMES.light.foreground
+        ? current.foreground
+        : base.foreground,
+      background: current.background !== TERMINAL_THEMES.dark.background &&
+        current.background !== TERMINAL_THEMES.light.background
+        ? current.background
+        : base.background,
+      cursor: accent
+    };
+
+    // The scrollback's command blocks carry theme colours too, and unlike the
+    // palette above they are decorations rather than live cells — nothing
+    // repaints them on its own. Left alone, every block made in the dark theme
+    // stayed a black band on the light screen with its own command text
+    // unreadable inside it.
+    repaintBlocksRef.current?.();
   }, [theme, accent]);
 
   useEffect(() => {

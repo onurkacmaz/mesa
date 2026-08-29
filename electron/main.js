@@ -176,6 +176,14 @@ function shellEnv(shellPath) {
   // instead of the stock blue-on-black.
   const colourEnv = {
     CLICOLOR: '1',
+    // Truecolor (24-bit) signalling. OpenCode, Claude Code and friends degrade
+    // their palette to 256-color when this is missing, which is exactly the
+    // "colours look off compared to Warp" complaint — Warp advertises it, we
+    // have to too. TERM_PROGRAM is the same story for the tools that switch on
+    // the host's identity rather than just TERM.
+    COLORTERM: 'truecolor',
+    TERM_PROGRAM: 'mesa',
+    TERM_PROGRAM_VERSION: '1.2.0',
     LSCOLORS: 'DxGxcxdxCxegedabagacad',
     LS_COLORS: 'di=1;33:ln=1;36:so=32:pi=33:ex=32:bd=34;46:cd=34;43:su=30;41:sg=30;46:tw=30;42:ow=30;43',
     GREP_COLORS: 'mt=1;33'

@@ -790,6 +790,14 @@ button:focus-visible {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Full-screen TUIs own the whole cell grid — padding shrinks their layout.
+   No background of its own: .pane-body already paints the theme's screen, and
+   a hard-coded colour here would go back to showing a black gutter around a
+   light-theme TUI. */
+.pane-body-tui .xterm {
+  padding: 0;
+}
+
 /* The scrollbar is a reading aid, not furniture: it stays out of the way and
    only surfaces while the pointer is actually in the terminal. */
 .pane-body .xterm-viewport::-webkit-scrollbar {

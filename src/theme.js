@@ -1,6 +1,13 @@
+import { DARK_TERMINAL_THEME } from './terminalOsc.mjs';
+
 // Both themes are warm-neutral and amber-forward: the light one is not a
 // simple inversion but its own surface — paper under lamplight rather than a
 // blank white sheet — so the workspace keeps one temperature either way.
+//
+// The dark terminal palette itself sits in terminalOsc.mjs, because the OSC
+// handlers answer colour probes out of it and it has to be importable from a
+// test. A tool that dresses itself from those answers (OpenCode does) picks up
+// this warmth rather than borrowing another terminal's.
 
 // One accent for the whole app. Giving every terminal its own tint turned the
 // canvas into a colour chart and made the borders read as status rather than
@@ -23,26 +30,7 @@ export const COMMAND_RULE = {
 
 export const TERMINAL_THEMES = {
   dark: {
-    background: '#0b0a09',
-    foreground: '#e8e3da',
-    cursorAccent: '#0b0a09',
-    selectionBackground: 'rgba(217,160,92,0.22)',
-    black: '#211f1d',
-    red: '#d2705c',
-    green: '#93ad6a',
-    yellow: '#d9a05c',
-    blue: '#7f9cba',
-    magenta: '#b98aa8',
-    cyan: '#79ada4',
-    white: '#d3cdc4',
-    brightBlack: '#6d675f',
-    brightRed: '#e28c78',
-    brightGreen: '#adc487',
-    brightYellow: '#eabd7c',
-    brightBlue: '#9db8d1',
-    brightMagenta: '#d0a6c0',
-    brightCyan: '#96c6bd',
-    brightWhite: '#f5f1ea'
+    ...DARK_TERMINAL_THEME
   },
   light: {
     background: '#ffffff',
