@@ -395,7 +395,7 @@ function shellEnv(shellPath) {
     // the host's identity rather than just TERM.
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'mesa',
-    TERM_PROGRAM_VERSION: '1.4.0',
+    TERM_PROGRAM_VERSION: '1.5.0',
     LSCOLORS: 'DxGxcxdxCxegedabagacad',
     LS_COLORS: 'di=1;33:ln=1;36:so=32:pi=33:ex=32:bd=34;46:cd=34;43:su=30;41:sg=30;46:tw=30;42:ow=30;43',
     GREP_COLORS: 'mt=1;33'
