@@ -128,8 +128,8 @@ function normalizePane(raw, seenTabIds) {
   };
 }
 
-// A workflow written before v1.4 also carries a `connections` array — the
-// ropes that used to be drawn between panes. It is passed over rather than
+// A workflow written by v1.3.0 or earlier also carries a `connections` array —
+// the ropes that used to be drawn between panes. It is passed over rather than
 // migrated: nothing reads it any more, and the governing rule of this file is
 // that an old file costs at most what it was holding, never the launch.
 function normalizeWorkflow(raw, seenPaneIds, seenTabIds) {

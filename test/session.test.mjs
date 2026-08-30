@@ -87,7 +87,7 @@ test('drops a pane with no usable geometry and keeps the rest', () => {
   );
 });
 
-// Ropes between panes were removed in v1.4. A file written by an earlier
+// Ropes between panes were removed after v1.3.0. A file written by an earlier
 // build still carries them, and the rule that a bad file costs no more than
 // the layout it held applies just as much to a file that is merely old: the
 // key is passed over, and the workflow it was sitting in opens normally.
