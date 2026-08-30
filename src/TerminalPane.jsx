@@ -9,7 +9,6 @@ import { setPaneCwd, deletePaneCwd } from './paneCwd.js';
 import { stripControls } from './session.mjs';
 import { deletePaneUrl } from './paneUrls.js';
 import { deletePaneRunning, setPaneRunning } from './paneRunning.js';
-import { SIDES } from './Connections.jsx';
 import { CloseIcon, PlusIcon, StartupIcon } from './icons.jsx';
 import { hint } from './shortcuts.jsx';
 
@@ -122,8 +121,7 @@ export default function TerminalPane({
   onSelect,
   onGroupDragStart,
   onGroupDrag,
-  onGroupDragEnd,
-  onPortDown
+  onGroupDragEnd
 }) {
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId) ?? pane.tabs[0];
 
@@ -143,8 +141,8 @@ export default function TerminalPane({
 
   // The committed geometry, republished whenever React knows it changed. The
   // drag and resize handlers below publish the *uncommitted* geometry on every
-  // frame; together they are what keeps a rope's endpoint glued to its pane.
-  // Layout effect rather than effect: a rope must have its shape on the same
+  // frame; together they are what keeps the minimap's mark glued to its pane.
+  // Layout effect rather than effect: the mark must be in place on the same
   // paint the pane first appears on, not one frame later.
   useLayoutEffect(() => {
     setPaneGeom(pane.id, { x: pane.x, y: pane.y, w: pane.width, h: pane.height });
@@ -412,10 +410,10 @@ export default function TerminalPane({
       // what the Alt escape hatch existed to undo — grip and escape hatch both
       // gone, and the body is simply always the body.
       dragHandleClassName="pane-titlebar"
-      // The ports sit on the pane's edges, and the top one overlaps the
-      // titlebar — which is the drag handle. Without it listed here, grabbing
-      // that port would start dragging the pane instead of pulling a rope.
-      cancel=".pane-close, .pane-title-input, .pane-port"
+      // Controls that live ON the drag handle. Without them listed here, a
+      // click on the × or in the title field would start dragging the pane
+      // instead of doing what the control is for.
+      cancel=".pane-close, .pane-title-input"
       onDragStart={(e, d) => {
         setManipulating(true);
         onGroupDragStart({ x: d.x, y: d.y });
@@ -423,7 +421,7 @@ export default function TerminalPane({
       onDrag={(e, d) => {
         // Published every frame because react-rnd keeps this position in its
         // own inline transform and does not report it until onDragStop. A
-        // connection reading pane.x/y would freeze here and snap on release.
+        // minimap reading pane.x/y would freeze here and snap on release.
         setPaneGeom(pane.id, { x: d.x, y: d.y, w: pane.width, h: pane.height });
         onGroupDrag({ x: d.x, y: d.y });
       }}

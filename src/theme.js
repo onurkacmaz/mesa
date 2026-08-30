@@ -56,30 +56,6 @@ export const TERMINAL_THEMES = {
   }
 };
 
-// Connections are told apart by colour, because tracing which rope goes where
-// is the whole job once more than two are crossing.
-//
-// The hues are lifted from the terminal palette above rather than invented as
-// a set of their own. Two things fall out of that for free: the canvas speaks
-// one vocabulary instead of two, and every colour here is already tuned to sit
-// legibly on its own theme's surface — the light entries are genuinely darker
-// inks, not the dark ones dimmed.
-//
-// Ordered so consecutive ropes land far apart on the wheel. Walking the
-// palette in its natural order would hand out amber then green, which read as
-// neighbours at a 1.5px stroke.
-const ropePalette = (t) => [t.yellow, t.cyan, t.magenta, t.green, t.blue, t.red];
-
-export const ROPE_COLORS = {
-  dark: ropePalette(TERMINAL_THEMES.dark),
-  light: ropePalette(TERMINAL_THEMES.light)
-};
-
-export function ropeColor(theme, index) {
-  const palette = ROPE_COLORS[theme] ?? ROPE_COLORS.dark;
-  return palette[((index % palette.length) + palette.length) % palette.length];
-}
-
 const STORAGE_KEY = 'wfterm.theme';
 
 // Three states, because "follow the system" is a real preference and not the

@@ -33,8 +33,7 @@ const session = (over = {}) => ({
       id: 'wf-1',
       name: 'api',
       view: { zoom: 0.8, pan: { x: -420, y: -180 } },
-      panes: [pane()],
-      connections: []
+      panes: [pane()]
     }
   ],
   ...over
@@ -77,8 +76,7 @@ test('drops a pane with no usable geometry and keeps the rest', () => {
         {
           id: 'wf-1',
           name: 'api',
-          panes: [pane({ id: 'term-1', width: 0 }), pane({ id: 'term-2' })],
-          connections: []
+          panes: [pane({ id: 'term-1', width: 0 }), pane({ id: 'term-2' })]
         }
       ]
     })
@@ -89,23 +87,28 @@ test('drops a pane with no usable geometry and keeps the rest', () => {
   );
 });
 
-test('drops a rope whose ends did not both survive', () => {
+// Ropes between panes were removed in v1.4. A file written by an earlier
+// build still carries them, and the rule that a bad file costs no more than
+// the layout it held applies just as much to a file that is merely old: the
+// key is passed over, and the workflow it was sitting in opens normally.
+test('a session written before ropes were removed still opens, without them', () => {
   const restored = normalizeSession(
     session({
       workflows: [
         {
           id: 'wf-1',
           name: 'api',
-          panes: [pane({ id: 'term-1' })],
-          connections: [
-            { id: 'conn-1', from: 'term-1', to: 'term-9' },
-            { id: 'conn-2', from: 'term-1', to: 'term-1' }
-          ]
+          panes: [pane({ id: 'term-1' }), pane({ id: 'term-2' })],
+          connections: [{ id: 'conn-1', from: 'term-1', to: 'term-2' }]
         }
       ]
     })
   );
-  assert.deepEqual(restored.workflows[0].connections, []);
+  assert.deepEqual(
+    restored.workflows[0].panes.map((p) => p.id),
+    ['term-1', 'term-2']
+  );
+  assert.equal('connections' in restored.workflows[0], false);
 });
 
 test('two panes never share an id, across workflows as well as within one', () => {
@@ -213,8 +216,7 @@ test('counters resume past every restored id', () => {
           {
             id: 'wf-3',
             name: 'a',
-            panes: [pane({ id: 'term-7', title: 'Terminal 7', z: 12 })],
-            connections: []
+            panes: [pane({ id: 'term-7', title: 'Terminal 7', z: 12 })]
           }
         ],
         activeWorkflowId: 'wf-3'
@@ -228,18 +230,19 @@ test('counters resume past every restored id', () => {
 });
 
 test('a stale counters block can only raise a seed, never lower it', () => {
-  const raw = normalizeSession(session({ counters: { pane: 0, workflow: 0, conn: 99 } }));
+  const raw = normalizeSession(session({ counters: { pane: 0, workflow: 0, session: 99 } }));
   const seeds = counterSeedsFrom(raw);
   assert.equal(seeds.pane, 1); // from term-1, not the 0 on file
   assert.equal(seeds.workflow, 1); // from wf-1
-  assert.equal(seeds.conn, 99); // nothing restored claims a higher one
+  assert.equal(seeds.session, 99); // nothing restored claims a higher one
 });
 
-// Panes and ropes are numbered out of ONE counter in Workspace (nextId is
-// called with both prefixes), so the two seeds are raised separately here and
-// have to be taken together by the caller. A restore that seeded from panes
-// alone would hand the next pane an id a rope is already using.
-test('pane and rope ids are seeded independently, to be taken together', () => {
+// A rope id from an old file used to be able to claim a number the pane
+// counter had to clear. With ropes gone the only ids in play are panes' and
+// tabs', and a stale conn-N on disk names nothing that is still restored — so
+// the next pane id follows the highest pane, and the old rope number does not
+// push it along.
+test('a rope id left on disk no longer pushes the pane counter along', () => {
   const seeds = counterSeedsFrom(
     normalizeSession(
       session({
@@ -248,20 +251,14 @@ test('pane and rope ids are seeded independently, to be taken together', () => {
             id: 'wf-1',
             name: 'a',
             panes: [pane({ id: 'term-7' }), pane({ id: 'term-2' })],
-            connections: [
-              { id: 'conn-9', from: 'term-7', to: 'term-2' },
-              { id: 'conn-3', from: 'term-2', to: 'term-7' }
-            ]
+            connections: [{ id: 'conn-9', from: 'term-7', to: 'term-2' }]
           }
         ]
       })
     )
   );
   assert.equal(seeds.pane, 7);
-  assert.equal(seeds.conn, 9);
-  // What Workspace.seedCounters does with them: the next id off the shared
-  // counter is term-10, clear of both term-7 and conn-9.
-  assert.equal(Math.max(seeds.pane, seeds.conn) + 1, 10);
+  assert.equal(seeds.conn, undefined);
 });
 
 test('a renamed pane contributes no session number', () => {
@@ -326,7 +323,6 @@ test('a v1 session becomes a v2 one, each pane holding the session it was', () =
   ]);
   assert.equal(terminal.activeTabId, 'term-3');
   assert.equal(browser.tabs[0].url, 'https://example.com');
-  assert.equal(restored.workflows[0].connections.length, 1);
   assert.deepEqual(restored.workflows[0].view, { zoom: 0.5, pan: { x: 10, y: 20 } });
 });
 

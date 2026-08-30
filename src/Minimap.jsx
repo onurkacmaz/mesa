@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { getPaneGeom, onPaneGeomChange } from './paneGeometry.js';
-import { anchorOf } from './Connections.jsx';
-import { ropeColor } from './theme.js';
 
 // Small enough to stay out of the way, large enough that a pane is still a
 // shape rather than a speck. Wider than tall because the canvas is: panes are
@@ -45,8 +43,6 @@ function fitProjection(panes, view) {
 
 export default function Minimap({
   panes,
-  connections,
-  theme,
   selectedIds,
   canvasRef,
   panRef,
@@ -55,10 +51,8 @@ export default function Minimap({
   onNavigate
 }) {
   const paneRefs = useRef(new Map());
-  const ropeRefs = useRef(new Map());
   const viewRectRef = useRef(null);
   const panesRef = useRef(panes);
-  const connectionsRef = useRef(connections);
   const projRef = useRef({ s: 1, ox: 0, oy: 0 });
   // While a drag is in progress the projection is held still. Without this the
   // map re-fits on every frame — the view is part of what it frames — so the
@@ -67,7 +61,6 @@ export default function Minimap({
   const frozenRef = useRef(null);
 
   panesRef.current = panes;
-  connectionsRef.current = connections;
 
   const sync = useCallback(() => {
     const container = canvasRef.current;
@@ -106,26 +99,6 @@ export default function Minimap({
       el.setAttribute('height', Math.max(2, r.h * s));
     }
 
-    for (const c of connectionsRef.current) {
-      const el = ropeRefs.current.get(c.id);
-      if (!el) continue;
-      const a = getPaneGeom(c.from);
-      const b = getPaneGeom(c.to);
-      if (!a || !b) {
-        el.style.display = 'none';
-        continue;
-      }
-      el.style.display = '';
-      // Straight, not the sagging curve. At this scale the sag would be under
-      // a pixel and the only thing it could add is noise.
-      const p0 = anchorOf(a, c.fromSide, c.fromT);
-      const p3 = anchorOf(b, c.toSide, c.toT);
-      el.setAttribute('x1', p0.x * s + ox);
-      el.setAttribute('y1', p0.y * s + oy);
-      el.setAttribute('x2', p3.x * s + ox);
-      el.setAttribute('y2', p3.y * s + oy);
-    }
-
     const vr = viewRectRef.current;
     if (vr) {
       vr.setAttribute('x', view.x * s + ox);
@@ -138,7 +111,7 @@ export default function Minimap({
   // Driven from three places, none of which is a React render: the canvas
   // calls sync() from commitView on every pan and zoom frame, pane geometry
   // reports every drag and resize frame, and the layout effect below covers
-  // panes or ropes being added and removed.
+  // panes being added and removed.
   useEffect(() => {
     apiRef.current = { sync };
     return () => {
@@ -153,12 +126,8 @@ export default function Minimap({
     for (const id of paneRefs.current.keys()) {
       if (!livePanes.has(id)) paneRefs.current.delete(id);
     }
-    const liveRopes = new Set(connections.map((c) => c.id));
-    for (const id of ropeRefs.current.keys()) {
-      if (!liveRopes.has(id)) ropeRefs.current.delete(id);
-    }
     sync();
-  }, [panes, connections, sync]);
+  }, [panes, sync]);
 
   // Screen point on the map -> canvas coordinates, through whichever
   // projection is currently in force.
@@ -205,9 +174,6 @@ export default function Minimap({
   const setPaneRef = (id) => (el) => {
     if (el) paneRefs.current.set(id, el);
   };
-  const setRopeRef = (id) => (el) => {
-    if (el) ropeRefs.current.set(id, el);
-  };
 
   return (
     <div className="minimap">
@@ -217,14 +183,6 @@ export default function Minimap({
         height={MAP_H}
         onMouseDown={beginNavigate}
       >
-        {connections.map((c) => (
-          <line
-            key={c.id}
-            ref={setRopeRef(c.id)}
-            className="minimap-rope"
-            style={{ stroke: ropeColor(theme, c.colorIndex ?? 0) }}
-          />
-        ))}
         {panes.map((p) => (
           <rect
             key={p.id}

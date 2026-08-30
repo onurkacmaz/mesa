@@ -143,8 +143,7 @@ export default function App() {
         // than dropped: its name and its place on the rail are still real.
         ...(getWorkspaceActions(workflow.id)?.serialize() ?? {
           view: { zoom: 1, pan: { x: 0, y: 0 } },
-          panes: [],
-          connections: []
+          panes: []
         })
       }))
     });

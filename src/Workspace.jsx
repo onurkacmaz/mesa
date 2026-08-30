@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import TerminalPane from './TerminalPane.jsx';
-import Connections, { anchorOf, nearestEdge } from './Connections.jsx';
 import Minimap from './Minimap.jsx';
 import PaneDock from './PaneDock.jsx';
 import RevealMark from './RevealMark.jsx';
@@ -10,7 +9,7 @@ import { getPaneCwd, setPaneCwd } from './paneCwd.js';
 import { getPaneUrl, setPaneUrl } from './paneUrls.js';
 import { isPaneRunning } from './paneRunning.js';
 import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
-import { SELECTION_COLOR, ropeColor } from './theme.js';
+import { SELECTION_COLOR } from './theme.js';
 import { Shortcut } from './shortcuts.jsx';
 
 const CASCADE_STEP = 32;
@@ -49,13 +48,9 @@ const ZOOM_BUTTON_RATIO = 1.1;
 // related. Short enough that it never feels like waiting.
 const REVEAL_MS = 320;
 const REVEAL_PAD = 72;
-// How long the arrival marks stay on the canvas, and with them the colour in
-// the ropes tied to the pane. Kept in step with the keyframes in styles.css —
-// 320 flying, 200 held, 300 letting go.
+// How long the arrival marks stay on the canvas. Kept in step with the
+// keyframes in styles.css — 320 flying, 200 held, 300 letting go.
 const REVEAL_MARK_MS = 820;
-// The colour leaves before the marks do, so the ropes' 120ms fade finishes on
-// the same beat the brackets do and the whole arrival exhales at once.
-const REVEAL_LIT_MS = 700;
 // Below this a pane is on screen but not readable, so arriving at it would
 // answer the wrong question. Landing zoom is raised to frame it instead.
 const REVEAL_LEGIBLE_ZOOM = 0.5;
@@ -170,8 +165,8 @@ let sessionCounter = 0;
 // minted `term-1` is two panes answering to one id. Seeded from the restored
 // session before any workspace mounts, and only ever upward — a workspace that
 // mounts later can never pull a counter back under an id already handed out.
-export function seedCounters({ pane, conn, session }) {
-  counter = Math.max(counter, pane ?? 0, conn ?? 0);
+export function seedCounters({ pane, session }) {
+  counter = Math.max(counter, pane ?? 0);
   sessionCounter = Math.max(sessionCounter, session ?? 0);
 }
 
@@ -180,7 +175,7 @@ export function seedCounters({ pane, conn, session }) {
 // remembers up to "Terminal 3" would hand out "Terminal 4" again — a number
 // this session has already used.
 export function readCounters() {
-  return { pane: counter, conn: counter, session: sessionCounter };
+  return { pane: counter, session: sessionCounter };
 }
 
 // One session: a terminal or a page. A pane is the box these sit in, and the
@@ -238,27 +233,12 @@ export default function Workspace({
   const [marqueeRect, setMarqueeRect] = useState(null);
   const [pendingClose, setPendingClose] = useState(null);
 
-  // Connections are purely organisational: they say two panes belong together
-  // and in which direction you read them. Nothing is piped, nothing is
-  // triggered. This state changes only when one is created or deleted — never
-  // while dragging, which is the whole reason the rope layer reads geometry
-  // out of paneGeometry instead of out of here.
-  const [connections, setConnections] = useState(() => initialState?.connections ?? []);
   // "Something here is worth writing down." Held in a ref so the workspace can
   // say it from inside a pan — which runs on every mousemove — without the
   // callback identity re-rendering anything.
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
 
-  const [selectedConnId, setSelectedConnId] = useState(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const draftRef = useRef(null);
-  const connApiRef = useRef(null);
-  const connectionsRef = useRef(connections);
-  connectionsRef.current = connections;
-  // Advances across the whole session so two ropes tied one after another
-  // never come out the same colour, even after the ones between them are cut.
-  const ropeIndexRef = useRef(0);
   const minimapApiRef = useRef(null);
 
   // The arrival: which pane is being landed on, and a token that changes on
@@ -576,7 +556,6 @@ export default function Workspace({
       if (e.target !== canvasRef.current && e.target !== contentRef.current) return;
 
       cancelReveal();
-      setSelectedConnId(null);
 
       if (spacePressedRef.current || e.button === 1) {
         panStateRef.current = { startX: e.clientX, startY: e.clientY, startPan: panRef.current };
@@ -657,240 +636,6 @@ export default function Workspace({
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, [isMarqueeSelecting, localPointFromEvent]);
-
-  // ───────────────────────────────────────────────────────────────────────
-  // CONNECTING — pull a rope out of a pane's edge port and drop it on
-  // another pane.
-  //
-  // The hit test is arithmetic against paneGeometry rather than
-  // elementFromPoint, for two reasons. A browser pane is a webview: it is a
-  // separate WebContents and the element it returns is not something this
-  // document can map back to a pane. And the gesture is suppressed over
-  // webviews anyway (see the body class below), so there would be nothing
-  // useful under the cursor there. Arithmetic works over every pane kind
-  // equally, and z-order is already a number we keep.
-  // ───────────────────────────────────────────────────────────────────────
-  const paneAtPoint = useCallback((point, excludeId) => {
-    let best = null;
-    for (const p of panesRef.current) {
-      if (p.id === excludeId) continue;
-      const r = getPaneGeom(p.id);
-      if (!r) continue;
-      if (point.x < r.x || point.x > r.x + r.w) continue;
-      if (point.y < r.y || point.y > r.y + r.h) continue;
-      if (!best || p.z > best.pane.z) best = { pane: p, rect: r };
-    }
-    return best;
-  }, []);
-
-  const addConnection = useCallback((from, fromSide, fromT, to, toSide, toT) => {
-    // A pane roped to itself has nothing to say, and would draw a loop with
-    // no rest shape.
-    if (from === to) return;
-    // Advanced OUTSIDE the updater, deliberately. React 18 may invoke an
-    // updater more than once (the same eager-evaluation hazard the zoom/pan
-    // refs are documented against above), and a counter bumped in there would
-    // skip a colour every time it happened. A skipped index here costs
-    // nothing — the palette cycles — but a double bump inside would.
-    const colorIndex = ropeIndexRef.current;
-    ropeIndexRef.current += 1;
-    setConnections((prev) => {
-      // Same pair, same direction, already tied. A second rope on top of the
-      // first would be invisible and undeletable.
-      if (prev.some((c) => c.from === from && c.to === to)) return prev;
-      return [
-        ...prev,
-        { id: nextId('conn'), from, fromSide, fromT, to, toSide, toT, colorIndex }
-      ];
-    });
-  }, []);
-
-  const selectConnection = useCallback((id) => {
-    // One selection concept: picking a rope drops the pane selection, the way
-    // picking a pane drops the rope.
-    setSelectedConnId(id);
-    setSelectedIds([]);
-  }, []);
-
-  // ── The gesture, in both of its forms ───────────────────────────────────
-  // Pulling a NEW rope out of a port and MOVING an end of one that already
-  // exists are the same motion, so they are the same code. The only thing that
-  // differs is what stays put and what happens on release, and both of those
-  // live in the draft: `fixed` is the end that does not move, `movingEnd` says
-  // which end of the connection is in your hand, and `connId` is null for a
-  // new rope or the rope being re-tied.
-  const beginDraft = useCallback(
-    (draft, e) => {
-      const point = localPointFromEvent(e);
-      draftRef.current = { ...draft, x: point.x, y: point.y, snap: null, snapSide: null, snapT: 0.5, targetId: null };
-      // The same trick the pane drag uses: while a gesture is running no page
-      // sees the mouse, because a webview under the cursor otherwise swallows
-      // mousemove and strands the drag halfway across the canvas.
-      document.body.classList.add('is-pane-drag', 'is-connecting');
-      setIsConnecting(true);
-      connApiRef.current?.wake();
-    },
-    [localPointFromEvent]
-  );
-
-  const startPortDrag = useCallback(
-    (paneId, side, e) => {
-      // A rope pulled from a port starts at that port's midpoint. Where it
-      // ties at the far end is free, and once it is tied either end can be
-      // dragged anywhere along any edge.
-      beginDraft({ fixed: { paneId, side, t: 0.5 }, movingEnd: 'to', connId: null }, e);
-    },
-    [beginDraft]
-  );
-
-  const startEndpointDrag = useCallback(
-    (connId, end, e) => {
-      const conn = connectionsRef.current.find((c) => c.id === connId);
-      if (!conn) return;
-      // Grab one end and the OTHER one becomes the anchor.
-      const fixed =
-        end === 'to'
-          ? { paneId: conn.from, side: conn.fromSide, t: conn.fromT }
-          : { paneId: conn.to, side: conn.toSide, t: conn.toT };
-      beginDraft({ fixed, movingEnd: end, connId }, e);
-    },
-    [beginDraft]
-  );
-
-  const moveConnectionEnd = useCallback((connId, end, paneId, side, t) => {
-    setConnections((prev) =>
-      prev.map((c) => {
-        if (c.id !== connId) return c;
-        const next =
-          end === 'to'
-            ? { ...c, to: paneId, toSide: side, toT: t }
-            : { ...c, from: paneId, fromSide: side, fromT: t };
-        // Re-tying an end onto the pane the other end is already on would make
-        // a self-connection out of a valid rope. Refuse and leave it as it was.
-        return next.from === next.to ? c : next;
-      })
-    );
-  }, []);
-
-  useEffect(() => {
-    if (!isConnecting) return undefined;
-
-    const finish = () => {
-      const draft = draftRef.current;
-      draftRef.current = null;
-      document.body.classList.remove('is-pane-drag', 'is-connecting');
-      setIsConnecting(false);
-      connApiRef.current?.wake();
-      return draft;
-    };
-
-    const onMouseMove = (e) => {
-      const draft = draftRef.current;
-      if (!draft) return;
-      const point = localPointFromEvent(e);
-      draft.x = point.x;
-      draft.y = point.y;
-
-      // The exact spot on the frame you are pointing at — which edge, and how
-      // far along it. Not one of four fixed ports: anywhere on the border.
-      // The pane holding the fixed end is excluded in both modes: an end
-      // dropped there would tie the rope to itself. Note the MOVING end's
-      // current pane is not excluded — re-tying somewhere else on the same
-      // pane is a normal thing to want.
-      const hit = paneAtPoint(point, draft.fixed.paneId);
-      if (hit) {
-        const { side, t } = nearestEdge(hit.rect, point);
-        draft.snapSide = side;
-        draft.snapT = t;
-        draft.snap = anchorOf(hit.rect, side, t);
-        draft.targetId = hit.pane.id;
-      } else {
-        draft.snapSide = null;
-        draft.snap = null;
-        draft.targetId = null;
-      }
-      connApiRef.current?.wake();
-    };
-
-    const onMouseUp = () => {
-      const draft = finish();
-      if (!draft) return;
-
-      // Dropped on nothing. For a new rope that is simply a cancel; for one
-      // being re-tied it is too, so the connection stays exactly where it was
-      // rather than being destroyed by a slip of the hand.
-      if (!draft.targetId) return;
-
-      if (draft.connId) {
-        moveConnectionEnd(draft.connId, draft.movingEnd, draft.targetId, draft.snapSide, draft.snapT);
-        return;
-      }
-
-      // Re-tying a pair that is already tied would otherwise be a gesture that
-      // completes and does nothing, with no explanation — a dead control by
-      // any other name. Answer it instead: select the rope that already exists,
-      // which lights it up and points straight at the reason nothing was added.
-      const existing = connectionsRef.current.find(
-        (c) => c.from === draft.fixed.paneId && c.to === draft.targetId
-      );
-      if (existing) {
-        selectConnection(existing.id);
-        return;
-      }
-
-      addConnection(
-        draft.fixed.paneId,
-        draft.fixed.side,
-        draft.fixed.t,
-        draft.targetId,
-        draft.snapSide,
-        draft.snapT
-      );
-    };
-
-    // Escape is the way out of a gesture this long that does not require
-    // finding empty canvas first.
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') finish();
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [
-    isConnecting,
-    localPointFromEvent,
-    paneAtPoint,
-    addConnection,
-    moveConnectionEnd,
-    selectConnection
-  ]);
-
-  useEffect(() => {
-    if (!active || !selectedConnId) return undefined;
-    const onKeyDown = (e) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-      // Backspace belongs to the shell the instant focus is inside a pane.
-      if (e.target instanceof Element && e.target.closest('.pane')) return;
-      e.preventDefault();
-      setConnections((prev) => prev.filter((c) => c.id !== selectedConnId));
-      setSelectedConnId(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [active, selectedConnId]);
-
-  // A gesture interrupted by an unmount must not leave the body wedged into
-  // its drag state, which would keep every webview inert.
-  useEffect(
-    () => () => document.body.classList.remove('is-pane-drag', 'is-connecting'),
-    []
-  );
 
   // ───────────────────────────────────────────────────────────────────────
   // WHEEL ROUTING — deliberately stateless: whatever is under the cursor
@@ -1182,8 +927,7 @@ export default function Workspace({
           }
           return saved;
         })
-      })),
-      connections: connectionsRef.current
+      }))
     }),
     []
   );
@@ -1213,27 +957,14 @@ export default function Workspace({
   }, [workflowId, addTerminal, serialize, runningCount]);
 
   // Everything that changes what this workflow *is* passes through one of
-  // these three. Pan is the exception and reports itself from commitView,
+  // these two. Pan is the exception and reports itself from commitView,
   // because it never becomes state at all.
   useEffect(() => {
     onDirtyRef.current?.();
-  }, [panes, connections, zoom]);
+  }, [panes, zoom]);
 
   const updatePane = useCallback((id, patch) => {
     setPanes((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-  }, []);
-
-  // Panes leave by two independent routes — the × on the titlebar and the ⌘W
-  // confirmation rail — so the pruning lives in one place both of them call.
-  // Missing either one leaves ropes tied to nothing.
-  const pruneConnections = useCallback((removedIds) => {
-    const gone = new Set(removedIds);
-    setConnections((prev) => prev.filter((c) => !gone.has(c.from) && !gone.has(c.to)));
-    setSelectedConnId((prev) => {
-      if (prev === null) return prev;
-      const survivor = connectionsRef.current.find((c) => c.id === prev);
-      return survivor && !gone.has(survivor.from) && !gone.has(survivor.to) ? prev : null;
-    });
   }, []);
 
   // Every way out of a pane ends the same way — the process group inside it is
@@ -1264,14 +995,10 @@ export default function Workspace({
   // The removals themselves, with no question attached. Two callers each:
   // the confirmation, when one was asked for, and the close paths that have
   // nothing to ask about.
-  const removePanes = useCallback(
-    (ids) => {
-      setPanes((prev) => prev.filter((p) => !ids.includes(p.id)));
-      setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
-      pruneConnections(ids);
-    },
-    [pruneConnections]
-  );
+  const removePanes = useCallback((ids) => {
+    setPanes((prev) => prev.filter((p) => !ids.includes(p.id)));
+    setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
+  }, []);
 
   const removeTab = useCallback((paneId, tabId) => {
     setPanes((prev) =>
@@ -1419,7 +1146,6 @@ export default function Workspace({
   // a multi-selection keeps the whole group intact (so it can be dragged
   // together). Shift toggles membership.
   const selectPane = useCallback((id, shift) => {
-    setSelectedConnId(null);
     setSelectedIds((prev) => {
       if (shift) {
         return prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
@@ -1437,7 +1163,7 @@ export default function Workspace({
   // that makes an unbounded canvas safe to wander.
   //
   // Geometry comes from paneGeometry rather than from `pane`, for the same
-  // reason the ropes read it: mid-drag, react-rnd owns the dragged pane's
+  // reason the minimap reads it: mid-drag, react-rnd owns the dragged pane's
   // position and pane.x/y is a frame or more stale.
   const revealPane = useCallback(
     (id) => {
@@ -1479,14 +1205,8 @@ export default function Workspace({
       // for the landing would make them an afterthought stuck on the end.
       revealTokenRef.current += 1;
       clearRevealTimers();
-      setReveal({ id, rect: r, token: revealTokenRef.current, lit: true });
-      revealTimersRef.current = [
-        setTimeout(
-          () => setReveal((current) => (current ? { ...current, lit: false } : current)),
-          REVEAL_LIT_MS
-        ),
-        setTimeout(() => setReveal(null), REVEAL_MARK_MS)
-      ];
+      setReveal({ id, rect: r, token: revealTokenRef.current });
+      revealTimersRef.current = [setTimeout(() => setReveal(null), REVEAL_MARK_MS)];
 
       const still = Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(dz) < 0.001;
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1533,7 +1253,7 @@ export default function Workspace({
     });
     // `multi` decides whether a drag frame has anything to say to React at
     // all. When only the anchor is moving, react-rnd owns its position until
-    // onDragStop and paneGeometry carries it to the ropes and the minimap —
+    // onDragStop and paneGeometry carries it to the minimap —
     // React learns nothing new from a frame, so it must not be woken for one.
     groupDragRef.current = {
       anchorId,
@@ -1640,34 +1360,8 @@ export default function Workspace({
               onGroupDragStart={(pos) => beginGroupDrag(pane.id, pos)}
               onGroupDrag={(pos) => updateGroupDrag(pane.id, pos)}
               onGroupDragEnd={endGroupDrag}
-              onPortDown={(side, e) => startPortDrag(pane.id, side, e)}
             />
           ))}
-
-          {/* Rendered after the panes, held behind them by z-index. Order
-              matters twice over: the ropes must pass behind the boxes (the
-              reading a workflow graph wants — the panes are the objects, the
-              lines are what ties them together), and this layer's layout
-              effect has to run AFTER every pane has published its geometry.
-              Mounted first it would run first, find an empty map on the paint a
-              new pane appears on, and blank that pane's ropes for a frame.
-              The layer inherits this element's pan/zoom transform, which is why
-              it never has to know about either. */}
-          <Connections
-            connections={connections}
-            theme={theme}
-            // The rope in your hand is already wearing the colour it will keep
-            // once it lands, so nothing changes appearance on drop.
-            draftColor={ropeColor(theme, ropeIndexRef.current)}
-            zoom={zoom}
-            zoomRef={zoomRef}
-            draftRef={draftRef}
-            selectedId={selectedConnId}
-            litPaneId={reveal?.lit ? reveal.id : null}
-            onSelect={selectConnection}
-            onEndpointDown={startEndpointDrag}
-            apiRef={connApiRef}
-          />
 
           {/* Over the panes rather than under them: it is an instrument
               aimed at one of them, not another box on the canvas. */}
@@ -1690,8 +1384,6 @@ export default function Workspace({
 
         <Minimap
           panes={panes}
-          connections={connections}
-          theme={theme}
           selectedIds={selectedIds}
           canvasRef={canvasRef}
           panRef={panRef}
@@ -1719,12 +1411,6 @@ export default function Workspace({
               <dd>drag across empty canvas</dd>
               <dt>Move</dt>
               <dd>drag a pane by its title bar</dd>
-              <dt>Connect</dt>
-              <dd>drag from the square on a pane&apos;s edge to another pane&apos;s edge</dd>
-              <dt>Edit a link</dt>
-              <dd>
-                click the line; drag either end to move it, <Shortcut id="removeLink" /> removes it
-              </dd>
             </dl>
           </div>
         )}

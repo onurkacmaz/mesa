@@ -45,14 +45,6 @@
   --kbd-bg: rgba(255, 255, 255, 0.07);
   --kbd-border: rgba(255, 255, 255, 0.14);
 
-  /* Ropes rest in a quiet neutral, not in the accent. theme.js gave up
-     per-terminal tints on the grounds that coloured edges "read as status
-     rather than as chrome" — an amber line on every connection would walk
-     straight back into that. The accent is reserved for the one rope you are
-     touching. */
-  --conn: rgba(232, 222, 208, 0.3);
-  --port: rgba(232, 222, 208, 0.34);
-
   --shadow-pane: 0 3px 8px rgba(0, 0, 0, 0.55);
   --shadow-rail: 0 6px 18px rgba(0, 0, 0, 0.6);
   --scroll-thumb: rgba(222, 214, 203, 0.16);
@@ -99,8 +91,6 @@
   --kbd-bg: rgba(30, 27, 24, 0.05);
   --kbd-border: rgba(30, 27, 24, 0.2);
 
-  --conn: rgba(30, 27, 24, 0.34);
-  --port: rgba(30, 27, 24, 0.36);
 
   --shadow-pane: 0 2px 6px rgba(30, 27, 24, 0.13);
   --shadow-rail: 0 8px 20px rgba(30, 27, 24, 0.16);
@@ -286,109 +276,6 @@ button:focus-visible {
   z-index: 9999;
 }
 
-/* ── Connections ─────────────────────────────────────────────────────────
-   A rope between two panes. The layer sits inside .canvas-content, so it
-   takes the canvas pan and zoom for free and never computes either. */
-
-/* The surface itself is inert, and that is load-bearing rather than tidy:
-   .canvas's mousedown handler only acts when the event target IS the canvas
-   or its content layer, so a full-bleed SVG that accepted the pointer would
-   quietly take marquee selection and space-drag panning away. Only the
-   transparent hit strokes below opt back in. */
-.conn-layer {
-  position: absolute;
-  /* Panes are handed z from a counter that starts at 2, so 1 keeps every rope
-     behind every pane no matter how the stack is reshuffled by clicking. */
-  z-index: 1;
-  pointer-events: none;
-}
-
-/* The second surface, above the panes. The rope you are pulling, the mark
-   showing exactly where it will tie, and the handles on the selected rope all
-   live here — every one of them is something you aim at, and a pane must never
-   be able to hide the thing you are aiming at. Still inert as a surface; only
-   the handles take the pointer. */
-.conn-layer-top {
-  z-index: 9000;
-}
-
-/* Where the rope will tie if you let go now. */
-.conn-snap {
-  fill: var(--accent);
-  stroke: none;
-  pointer-events: none;
-}
-
-/* The two ends of the selected rope, draggable to anywhere on any pane's
-   frame. Filled in the rope's own colour so it is obvious which rope they
-   belong to, outlined in the canvas tone so they stay legible sitting on top
-   of a pane's border. */
-.conn-endpoint {
-  fill: var(--rope, var(--accent));
-  stroke: var(--bg-canvas);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-  pointer-events: auto;
-  cursor: crosshair;
-}
-
-.conn-line {
-  fill: none;
-  /* Each rope carries its own hue, handed down from the <g> as --rope. The
-     neutral is a fallback that should never be reached. Resting opacity keeps
-     a canvas full of ropes from turning into a colour chart — the hue is there
-     to be traced, not to shout — and hovering strengthens THAT colour rather
-     than swapping in the accent, so a rope never changes identity when you
-     touch it. */
-  stroke: var(--rope, var(--conn));
-  opacity: 0.62;
-  stroke-width: 1.5;
-  /* Square caps, mitred joins — the rule at the top of this file. A round cap
-     here would be the one soft corner in the whole interface. */
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-  /* The layer lives inside scale(zoom): a plain 1.5px stroke would render at
-     0.15px when zoomed out to 10% and 3.75px at 250%. */
-  vector-effect: non-scaling-stroke;
-  transition: opacity 120ms ease, stroke-width 120ms ease;
-}
-
-.conn-head {
-  fill: var(--rope, var(--conn));
-  stroke: none;
-  opacity: 0.62;
-  transition: opacity 120ms ease;
-}
-
-/* The grip. Transparent and much wider than the line, because a 1.5px target
-   is not a target. */
-.conn-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 13;
-  vector-effect: non-scaling-stroke;
-  pointer-events: stroke;
-  cursor: pointer;
-}
-
-.conn:hover .conn-line,
-.conn-selected .conn-line,
-.conn:hover .conn-head,
-.conn-selected .conn-head {
-  opacity: 1;
-}
-
-.conn-selected .conn-line {
-  stroke-width: 2.2;
-}
-
-/* The rope mid-pull, already wearing the colour it will keep once it lands, so
-   nothing changes appearance on drop. Full strength because it is the thing
-   your hand is on. */
-.conn-draft {
-  opacity: 1;
-}
-
 /* ── Minimap ─────────────────────────────────────────────────────────────
    Bottom-right, on the same recessed frame the panes use so it reads as part
    of the instrument and not as a widget parked on top of it. */
@@ -435,12 +322,6 @@ button:focus-visible {
   opacity: 0.9;
 }
 
-.minimap-rope {
-  stroke-width: 1;
-  stroke-linecap: square;
-  opacity: 0.55;
-}
-
 /* Where you are. An outline rather than a tint, so it never obscures what it
    frames — and no fill at all, because a translucent wash over the panes
    would make two overlapping greys out of one legible one. */
@@ -449,101 +330,6 @@ button:focus-visible {
   stroke: var(--accent);
   stroke-width: 1;
   shape-rendering: crispEdges;
-}
-
-/* ── Ports ───────────────────────────────────────────────────────────────
-   Square tabs flush against the inside of the pane's border. They are cut
-   into the frame rather than stuck onto it, which is the only form the square
-   design language leaves available — no dots, no circles, no handles. */
-.pane-port {
-  position: absolute;
-  z-index: 3;
-  background: var(--port);
-  cursor: crosshair;
-  opacity: 0;
-  /* A hidden element still takes the pointer. Without this, every pane would
-     carry four invisible traps on its edges that swallow clicks meant for the
-     terminal underneath — and show a crosshair over nothing. Interactivity is
-     granted with visibility, never before it. */
-  pointer-events: none;
-  transition: opacity 110ms ease, background-color 110ms ease;
-}
-
-/* A grip larger than the mark, extended only ALONG the edge and outward —
-   never inward. The 7px the tab occupies is already react-rnd's resize-handle
-   strip, so it costs the terminal nothing; a grip reaching further in would
-   start eating real clicks in the screen. (Outward is cropped by .pane's
-   overflow:hidden, which is harmless — it is transparent.) */
-.pane-port::before {
-  content: '';
-  position: absolute;
-}
-
-.pane-port-left::before {
-  inset: -8px 0 -8px -8px;
-}
-
-.pane-port-right::before {
-  inset: -8px -8px -8px 0;
-}
-
-.pane-port-top::before {
-  inset: -8px -8px 0 -8px;
-}
-
-.pane-port-bottom::before {
-  inset: 0 -8px -8px -8px;
-}
-
-.pane:hover .pane-port,
-.pane-focused .pane-port,
-.is-connecting .pane-port {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.pane-port:hover {
-  background: var(--accent);
-}
-
-.pane-port-left,
-.pane-port-right {
-  width: 7px;
-  height: 28px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.pane-port-left {
-  left: 0;
-}
-
-.pane-port-right {
-  right: 0;
-}
-
-.pane-port-top,
-.pane-port-bottom {
-  width: 28px;
-  height: 7px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.pane-port-top {
-  top: 0;
-}
-
-.pane-port-bottom {
-  bottom: 0;
-}
-
-/* While a rope is being pulled the cursor must read as "connecting"
-   everywhere, including over the pane you are aiming at. */
-.is-connecting .canvas,
-.is-connecting .pane,
-.is-connecting .pane-titlebar {
-  cursor: crosshair;
 }
 
 /* The empty state teaches the canvas rather than announcing its emptiness:
@@ -2177,8 +1963,8 @@ button:focus-visible {
   position: absolute;
   width: var(--bracket-arm);
   height: var(--bracket-arm);
-  /* Amber, and only amber: the ropes carry the palette, the chrome carries the
-     one accent. A second hue here would make the mark read as a status. */
+  /* Amber, and only amber. A second hue here would make the mark read as a
+     status rather than as chrome. */
   border-color: var(--bracket-color, var(--accent));
   border-style: solid;
   border-width: 0;
@@ -2279,18 +2065,6 @@ button:focus-visible {
   .reveal-mark {
     animation: reveal-mark-life 620ms linear forwards;
   }
-}
-
-/* A pane's ropes come up to full colour for as long as its mark is on screen.
-   This is where the palette gets to speak: arriving somewhere shows you what
-   that somewhere is tied to, in the hues the ropes already wear. */
-.conn-lit .conn-line {
-  opacity: 1;
-  stroke-width: 2.6;
-}
-
-.conn-lit .conn-head {
-  opacity: 1;
 }
 
 /* The empty tab. Chromium paints about:blank white; this layer covers it with

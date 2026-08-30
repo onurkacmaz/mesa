@@ -128,31 +128,14 @@ function normalizePane(raw, seenTabIds) {
   };
 }
 
-// A rope is only meaningful as the thing between two panes, so one whose ends
-// did not both survive is dropped with them. Keeping it would draw a line to
-// nowhere, which is the exact bug pruneConnections exists to prevent while the
-// app is running.
-function normalizeConnection(raw, paneIds) {
-  if (!isText(raw?.id)) return null;
-  if (!paneIds.has(raw.from) || !paneIds.has(raw.to)) return null;
-  if (raw.from === raw.to) return null;
-  return {
-    id: raw.id,
-    from: raw.from,
-    fromSide: isText(raw.fromSide) ? raw.fromSide : 'right',
-    fromT: isNum(raw.fromT) ? raw.fromT : 0.5,
-    to: raw.to,
-    toSide: isText(raw.toSide) ? raw.toSide : 'left',
-    toT: isNum(raw.toT) ? raw.toT : 0.5,
-    colorIndex: isNum(raw.colorIndex) ? Math.floor(raw.colorIndex) : 0
-  };
-}
-
+// A workflow written before v1.4 also carries a `connections` array — the
+// ropes that used to be drawn between panes. It is passed over rather than
+// migrated: nothing reads it any more, and the governing rule of this file is
+// that an old file costs at most what it was holding, never the launch.
 function normalizeWorkflow(raw, seenPaneIds, seenTabIds) {
   if (!isText(raw?.id)) return null;
 
   const panes = [];
-  const paneIds = new Set();
   for (const candidate of Array.isArray(raw.panes) ? raw.panes : []) {
     const pane = normalizePane(candidate, seenTabIds);
     // Pane ids are handed out from one counter shared by every workflow, so a
@@ -160,25 +143,14 @@ function normalizeWorkflow(raw, seenPaneIds, seenTabIds) {
     // answering to the same terminal session.
     if (!pane || seenPaneIds.has(pane.id)) continue;
     seenPaneIds.add(pane.id);
-    paneIds.add(pane.id);
     panes.push(pane);
-  }
-
-  const connections = [];
-  const connIds = new Set();
-  for (const candidate of Array.isArray(raw.connections) ? raw.connections : []) {
-    const conn = normalizeConnection(candidate, paneIds);
-    if (!conn || connIds.has(conn.id)) continue;
-    connIds.add(conn.id);
-    connections.push(conn);
   }
 
   return {
     id: raw.id,
     name: isText(raw.name) ? raw.name : 'Workflow',
     view: normalizeView(raw.view),
-    panes,
-    connections
+    panes
   };
 }
 
@@ -263,7 +235,6 @@ export function counterSeedsFrom(session) {
   const seeds = {
     pane: countOf(session?.counters?.pane),
     workflow: countOf(session?.counters?.workflow),
-    conn: countOf(session?.counters?.conn),
     // Session numbers only name panes ("Terminal 4"), so a low seed costs a
     // confusing duplicate name rather than a collision — still worth getting
     // right, since a second "Terminal 4" reads as a bug.
@@ -286,9 +257,6 @@ export function counterSeedsFrom(session) {
         raise('pane', trailingNumber(tab.id));
         raise('session', trailingCount(tab.title));
       }
-    }
-    for (const conn of workflow.connections) {
-      raise('conn', trailingNumber(conn.id));
     }
   }
   return seeds;

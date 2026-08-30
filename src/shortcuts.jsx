@@ -39,8 +39,7 @@ export const SHORTCUTS = {
   newline: { keys: '⇧return', label: 'New line without running' },
 
   confirm: { keys: 'return', label: 'Confirm' },
-  cancel: { keys: 'esc', label: 'Cancel' },
-  removeLink: { keys: 'delete', label: 'Remove link' }
+  cancel: { keys: 'esc', label: 'Cancel' }
 };
 
 // A whole combination stays inside one cap. Splitting ⇧⌘0 into three boxes
