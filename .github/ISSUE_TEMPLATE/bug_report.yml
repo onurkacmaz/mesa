@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in Mesa does not work the way it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, and what Mesa did instead of what you expected.
+      placeholder: |
+        Opened a browser pane, pressed ⌘L, and the address bar did not take focus.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that shows it. If it only happens sometimes, say so.
+      placeholder: |
+        1. Open a terminal (⌘N)
+        2. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Mesa version
+      description: From the DMG you installed, or the commit if you built it yourself.
+      placeholder: "1.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.2 (Apple Silicon)"
+    validations:
+      required: true
+
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      description: >
+        Only matters for terminal behaviour, but it matters a lot there — several
+        things rely on a zsh prompt hook.
+      placeholder: "zsh 5.9"
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        Screenshots help for anything visual. Errors from the devtools console
+        (View → Toggle Developer Tools) help for anything else.

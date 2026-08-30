@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest something Mesa should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Before writing: Mesa is deliberately small. It opens shells and puts them
+        somewhere on a canvas. Agent orchestration, git worktree management and
+        task boards are explicitly out of scope — see "What it does not do" in
+        the README. Suggestions in that direction will probably be declined, and
+        it is fairer to say so here than after you have written it up.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >
+        The situation you are in, not the feature you have in mind. This is the
+        part that decides whether something gets built, and often there is a
+        better answer than the one either of us thought of first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you think would fix it
+      description: Your proposed solution, if you have one.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: >
+        The workaround you currently use, and why it is not good enough. A
+        tolerable workaround is useful information too.

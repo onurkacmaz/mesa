@@ -2,8 +2,17 @@
   "name": "mesa",
   "version": "1.4.0",
   "private": true,
-  "description": "Multi-terminal, draggable workflow canvas desktop app POC",
+  "description": "Terminals on an infinite canvas",
   "author": "Onur Kaçmaz <kacmaz.onur@hotmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/onurkacmaz/mesa",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onurkacmaz/mesa.git"
+  },
+  "bugs": {
+    "url": "https://github.com/onurkacmaz/mesa/issues"
+  },
   "main": "electron/main.js",
   "type": "commonjs",
   "scripts": {

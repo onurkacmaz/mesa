@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # macOS because node-pty compiles against the host, and macOS is the only
+    # platform this app is built for. The tests themselves are pure and would
+    # pass anywhere; the install is what needs the right toolchain.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      # Catches what the unit tests cannot: a renderer that no longer bundles
+      # (a bad import, a file deleted while something still references it).
+      - run: npm run build
