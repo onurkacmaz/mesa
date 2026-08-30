@@ -11,6 +11,39 @@ import { isPaneRunning } from './paneRunning.js';
 import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
 import { SELECTION_COLOR } from './theme.js';
 import { Shortcut } from './shortcuts.jsx';
+import { TickIcon } from './icons.jsx';
+import { editorsFrom, resolveEditor } from './editors.mjs';
+
+// /Users/someone/src/mesa → ~/src/mesa. The rail is naming a folder so you can
+// tell it is the right one, not printing a path for you to copy — and a home
+// directory spelled out in full pushes the part that actually identifies the
+// folder off the end of the line.
+//
+// A path too long for the rail is cut from the FRONT, because the end is the
+// part that says which project this is: every folder truncated the other way
+// reads "~/Desktop/mesa/src/…". Cut here, by whole path segments, rather than
+// in CSS. The CSS way is `direction: rtl`, and it is wrong for paths: `~`, `/`
+// and `…` are all bidi-neutral, so the algorithm reorders the leading `~/` to
+// the end and the rail renders `…/legacy-migration/~` — a folder that does not
+// exist. textContent still reads correctly while that happens, so it is only
+// ever visible in a screenshot.
+const HOME = /^\/Users\/[^/]+(?=\/|$)/;
+const DIR_BUDGET = 46;
+
+function shortenDir(dir) {
+  const short = dir.replace(HOME, '~');
+  if (short.length <= DIR_BUDGET) return short;
+  const parts = short.split('/');
+  // Always keep the last segment, however long it is: a name cut in half is
+  // worse than a name with no context.
+  let kept = [parts.pop()];
+  while (parts.length) {
+    const next = parts.pop();
+    if (`${next}/${kept.join('/')}`.length + 2 > DIR_BUDGET) break;
+    kept = [next, ...kept];
+  }
+  return `…/${kept.join('/')}`;
+}
 
 const CASCADE_STEP = 32;
 
@@ -218,6 +251,14 @@ export default function Workspace({
   theme,
   active,
   initialState,
+  // Held back while the onboarding cards are up. They print the same keys, on
+  // the same canvas, over the top of this — two legends at once reads as a
+  // mistake rather than as emphasis.
+  hideEmptyHint = false,
+  // The editor ⌘E uses, and the way to record a new answer. Owned by App
+  // because the flags file is one file for the whole app, not one per canvas.
+  editorPref = null,
+  onEditorChosen,
   onDirty,
   onRequestClose
 }) {
@@ -232,6 +273,15 @@ export default function Workspace({
   const [isMarqueeSelecting, setIsMarqueeSelecting] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState(null);
   const [pendingClose, setPendingClose] = useState(null);
+  // The editor question, standing: which folder it was asked about and which
+  // editors this Mac actually has. Null the rest of the time — nothing is
+  // scanned, and no rail is drawn, until ⌘E is pressed.
+  const [editorChoice, setEditorChoice] = useState(null);
+  // The title bar menu: which folder, which editors, and where the pointer
+  // was. Positioned in window coordinates because it is drawn outside the
+  // canvas transform — see the comment on TerminalPane's onContextMenu.
+  const [paneMenu, setPaneMenu] = useState(null);
+  const paneMenuRef = useRef(null);
 
   // "Something here is worth writing down." Held in a ref so the workspace can
   // say it from inside a pan — which runs on every mousemove — without the
@@ -446,9 +496,20 @@ export default function Workspace({
     // empty until they do. Seeding them from the file is what lets the next
     // terminal open in the right folder, and what keeps a session saved
     // before the first prompt from forgetting where everything was.
+    //
+    // Seeded from the TABS, which is where a folder and an address have lived
+    // since a pane became a box of sessions. This read the pane instead, and a
+    // pane has carried neither field since that change — so `pane.cwd` was
+    // always undefined and the loop had been doing nothing at all. The comment
+    // above it stayed true the whole time; only the code had moved on. Both
+    // registries are keyed by tab id everywhere else (see setPaneCwd calls in
+    // addTab and TerminalPane), so seeding by pane id would have missed even
+    // if the field had been there.
     for (const pane of initialState?.panes ?? []) {
-      if (pane.cwd) setPaneCwd(pane.id, pane.cwd);
-      if (pane.url) setPaneUrl(pane.id, pane.url);
+      for (const tab of pane.tabs ?? []) {
+        if (tab.cwd) setPaneCwd(tab.id, tab.cwd);
+        if (tab.url) setPaneUrl(tab.id, tab.url);
+      }
     }
 
     const container = canvasRef.current;
@@ -719,6 +780,120 @@ export default function Workspace({
     return () => el.removeEventListener('wheel', onWheel, { capture: true });
   }, [applyZoom, panBy]);
 
+  // Held in a ref for the same reason the selection is: the key listener below
+  // is attached once and would otherwise close over the preference as it was
+  // when the workspace mounted.
+  const editorPrefRef = useRef(editorPref);
+  editorPrefRef.current = editorPref;
+
+  // ⌘E hands the selected terminal's folder to an editor. Mesa does not embed
+  // one — see src/editors.mjs for why that is not a thing this app can do —
+  // so the folder goes out to the editor already installed.
+  //
+  // The folder comes from the session's own cwd registry, which is fed by OSC 7
+  // on every prompt, so it is where the shell is NOW rather than where it
+  // started. A terminal you have cd'd into a subdirectory opens there.
+  // The folder a pane is showing, or null when there is nothing to open: a
+  // browser pane has no folder, and neither does a terminal whose shell has
+  // not printed a prompt yet.
+  const folderOf = useCallback((paneId) => {
+    const pane = panesRef.current.find((p) => p.id === paneId);
+    if (!pane || pane.kind !== 'terminal') return null;
+    return getPaneCwd(pane.activeTabId) ?? null;
+  }, []);
+
+  // Opening and remembering are the same act. Every route in — ⌘E's first
+  // question, the rail, the title bar menu — goes through here, so choosing an
+  // editor anywhere is choosing it everywhere.
+  const useEditor = useCallback(
+    (editor, dir) => {
+      window.terminalApi.openInEditor(editor.app, dir);
+      onEditorChosen?.(editor.app);
+    },
+    [onEditorChosen]
+  );
+
+  // Picks an application by hand and uses it. The way in for an editor the
+  // known list has never heard of, and the whole of ⌘E on a Mac that has none
+  // of them: rather than doing nothing, the shortcut asks.
+  const pickApplication = useCallback(
+    async (dir) => {
+      const app = await window.terminalApi.chooseApplication();
+      if (app) useEditor({ app, label: app }, dir);
+    },
+    [useEditor]
+  );
+
+  const openFolderInEditor = useCallback(
+    async (askWhich) => {
+      const selected = selectedIdsRef.current;
+      if (selected.length !== 1) return;
+      const dir = folderOf(selected[0]);
+      if (!dir) return;
+
+      const editors = editorsFrom(
+        await window.terminalApi.listApplications(),
+        editorPrefRef.current
+      );
+      // No editor this app recognises, and nothing chosen by hand before. The
+      // shortcut used to return here and look broken; now it asks the one
+      // question it can ask.
+      if (!editors.length) {
+        setEditorChoice(null);
+        await pickApplication(dir);
+        return;
+      }
+
+      const remembered = askWhich ? null : resolveEditor(editorPrefRef.current, editors);
+      // Straight through on the remembered one — and note it is not put through
+      // useEditor, because re-recording the answer someone already gave is not
+      // a decision, and would keep the file being written on every ⌘E.
+      if (remembered) {
+        window.terminalApi.openInEditor(remembered.app, dir);
+        return;
+      }
+      setEditorChoice({ dir, editors });
+    },
+    [folderOf, pickApplication]
+  );
+
+  const chooseEditor = useCallback(
+    (editor) => {
+      const choice = editorChoice;
+      setEditorChoice(null);
+      if (choice) useEditor(editor, choice.dir);
+    },
+    [editorChoice, useEditor]
+  );
+
+  // Right-click on a title bar. The editors are read before the menu is drawn
+  // rather than after, so it opens with its items already in it — a menu that
+  // fills in a frame later reads as a stutter.
+  const openTitlebarMenu = useCallback(
+    async (paneId, x, y) => {
+      const dir = folderOf(paneId);
+      if (!dir) return; // a browser pane, or a terminal with nothing to say yet
+      const editors = editorsFrom(
+        await window.terminalApi.listApplications(),
+        editorPrefRef.current
+      );
+      // The pointer arrives in window coordinates and the menu is positioned
+      // inside the canvas box, which starts below the workflow strip.
+      const box = canvasRef.current?.getBoundingClientRect();
+      setPaneMenu({ dir, editors, x: x - (box?.left ?? 0), y: y - (box?.top ?? 0) });
+    },
+    [folderOf]
+  );
+
+  const chooseFromMenu = useCallback(
+    (editor) => {
+      const menu = paneMenu;
+      setPaneMenu(null);
+      if (menu) useEditor(editor, menu.dir);
+    },
+    [paneMenu, useEditor]
+  );
+
   useEffect(() => {
     if (!active) return undefined;
     const onKeyDown = (e) => {
@@ -754,6 +929,12 @@ export default function Workspace({
         if (!tab) return;
         e.preventDefault();
         selectTab(pane.id, tab.id);
+      } else if (e.key.toLowerCase() === 'e') {
+        // Swallowed whether or not there is a terminal to act on, the way ⌘W
+        // is: a shortcut that sometimes falls through to whatever else claims
+        // ⌘E reads as broken rather than as inapplicable.
+        e.preventDefault();
+        openFolderInEditor(e.shiftKey);
       } else if (e.key.toLowerCase() === 'w') {
         // Always swallowed, even with nothing selected: ⌘W must never fall
         // through to closing the workspace.
@@ -764,7 +945,7 @@ export default function Workspace({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, zoomIn, zoomOut, zoomReset, fitToContent, selectTab]);
+  }, [active, zoomIn, zoomOut, zoomReset, fitToContent, selectTab, openFolderInEditor]);
 
   // A new session joins the selected window when that window is the same kind,
   // and opens its own window otherwise. A terminal and a page are different
@@ -1142,6 +1323,62 @@ export default function Workspace({
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [pendingClose, pendingCloseTab, active, cancelClose, confirmClose, confirmCloseTab]);
 
+  // Measured, then nudged back inside the canvas. Right-clicking near the
+  // bottom or the right edge is the ordinary case, not the exotic one — a pane
+  // dragged down there is exactly where you would reach for its menu — and a
+  // menu sized from a guess at its own item height would be wrong the first
+  // time an editor with a long name was installed.
+  useLayoutEffect(() => {
+    const el = paneMenuRef.current;
+    const box = canvasRef.current?.getBoundingClientRect();
+    if (!el || !box || !paneMenu) return;
+    const menu = el.getBoundingClientRect();
+    const overflowX = Math.max(0, menu.right - box.right + 8);
+    const overflowY = Math.max(0, menu.bottom - box.bottom + 8);
+    if (!overflowX && !overflowY) return;
+    // Clamped at zero as well as at the far edge: a menu taller than the
+    // canvas should start at the top of it, never above.
+    el.style.left = `${Math.max(4, paneMenu.x - overflowX)}px`;
+    el.style.top = `${Math.max(4, paneMenu.y - overflowY)}px`;
+  }, [paneMenu]);
+
+  // Dismissed by esc or by a click anywhere else, the way a menu is. Pointerdown
+  // rather than click, so it closes on the press rather than waiting for a
+  // release that may land somewhere else entirely.
+  useEffect(() => {
+    if (!paneMenu) return undefined;
+    const onPointerDown = (e) => {
+      if (paneMenuRef.current?.contains(e.target)) return;
+      setPaneMenu(null);
+    };
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setPaneMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [paneMenu]);
+
+  // The editor question takes esc the same way, and only esc: there is no
+  // default editor to press return for, which is the whole reason it is being
+  // asked. Captured, so a terminal with the keyboard cannot swallow the key
+  // that dismisses the rail standing over it.
+  useEffect(() => {
+    if (!editorChoice || !active) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setEditorChoice(null);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [editorChoice, active]);
+
   // Clicking an unselected pane selects just it; clicking one already inside
   // a multi-selection keeps the whole group intact (so it can be dragged
   // together). Shift toggles membership.
@@ -1357,6 +1594,9 @@ export default function Workspace({
               onTabAdd={() => addTab(pane.id, pane.kind)}
               onClose={() => closePane(pane.id)}
               onSelect={(shift) => selectPane(pane.id, shift)}
+              onTitlebarMenu={
+                pane.kind === 'terminal' ? (x, y) => openTitlebarMenu(pane.id, x, y) : undefined
+              }
               onGroupDragStart={(pos) => beginGroupDrag(pane.id, pos)}
               onGroupDrag={(pos) => updateGroupDrag(pane.id, pos)}
               onGroupDragEnd={endGroupDrag}
@@ -1392,7 +1632,7 @@ export default function Workspace({
           onNavigate={centerOn}
         />
 
-        {panes.length === 0 && (
+        {panes.length === 0 && !hideEmptyHint && (
           <div className="empty-hint">
             <p className="empty-hint-lead">
               Empty workspace. Press <Shortcut id="newTerminal" /> to open the first terminal.
@@ -1449,6 +1689,105 @@ export default function Workspace({
                 onClick={pendingCloseTab ? confirmCloseTab : confirmClose}
               >
                 Close <Shortcut id="confirm" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Right-clicking a title bar. Drawn here, a sibling of the canvas
+            content rather than a child of the pane, so the canvas transform
+            cannot scale it: at 50% zoom a menu inside a pane would come out
+            half size. Its coordinates were converted to this box when it
+            opened, and nudged back inside it after measuring. */}
+        {paneMenu && (
+          <div
+            className="pane-menu"
+            ref={paneMenuRef}
+            role="menu"
+            aria-label="Open folder in"
+            style={{ left: paneMenu.x, top: paneMenu.y }}
+          >
+            <div className="pane-menu-head">Open folder in</div>
+            {paneMenu.editors.map((editor) => {
+              const current = editor.app === editorPref;
+              return (
+                <button
+                  key={editor.app}
+                  type="button"
+                  role="menuitem"
+                  className="pane-menu-item"
+                  onClick={() => chooseFromMenu(editor)}
+                >
+                  <span className="pane-menu-tick">{current ? <TickIcon /> : null}</span>
+                  <span className="pane-menu-label">{editor.label}</span>
+                  {/* The key is printed only beside the one it would actually
+                      use, because that is the whole of what ⌘E means. */}
+                  <span className="pane-menu-key">
+                    {current ? <Shortcut id="openInEditor" /> : null}
+                  </span>
+                </button>
+              );
+            })}
+            {/* The list above is a good default, never a ceiling. Anything on
+                this Mac can be reached from here, and once reached it is
+                offered alongside the others from then on. */}
+            <div className="pane-menu-sep" />
+            <button
+              type="button"
+              role="menuitem"
+              className="pane-menu-item pane-menu-item-quiet"
+              onClick={() => {
+                const { dir } = paneMenu;
+                setPaneMenu(null);
+                pickApplication(dir);
+              }}
+            >
+              <span className="pane-menu-tick" />
+              <span className="pane-menu-label">Other application…</span>
+              <span className="pane-menu-key" />
+            </button>
+          </div>
+        )}
+
+        {/* The same rail the close question stands on, asking a different
+            question. Not a modal in the middle of the canvas: the pane whose
+            folder this is stays visible and selected while you answer. */}
+        {editorChoice && (
+          <div className="confirm-rail" role="dialog" aria-label="Choose an editor">
+            <div className="confirm-rail-copy">
+              <strong>Open in</strong>
+              <span className="editor-rail-dir" title={editorChoice.dir}>
+                {shortenDir(editorChoice.dir)}
+              </span>
+            </div>
+            <div className="editor-rail-options">
+              {editorChoice.editors.map((editor) => (
+                <button
+                  key={editor.app}
+                  type="button"
+                  className={`editor-option${
+                    editor.app === editorPref ? ' editor-option-current' : ''
+                  }`}
+                  onClick={() => chooseEditor(editor)}
+                >
+                  {editor.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="editor-option editor-option-other"
+                onClick={() => {
+                  const { dir } = editorChoice;
+                  setEditorChoice(null);
+                  pickApplication(dir);
+                }}
+              >
+                Other…
+              </button>
+            </div>
+            <div className="confirm-rail-actions">
+              <button type="button" className="confirm-cancel" onClick={() => setEditorChoice(null)}>
+                Cancel <Shortcut id="cancel" />
               </button>
             </div>
           </div>

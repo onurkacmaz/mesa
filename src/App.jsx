@@ -2,45 +2,25 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import Workspace, { readCounters, seedCounters } from './Workspace.jsx';
 import { SESSION_VERSION, counterSeedsFrom, normalizeSession } from './session.mjs';
 import { THEME_MODES, readStoredMode, storeMode, systemTheme } from './theme.js';
-import { CloseIcon, PlusIcon } from './icons.jsx';
+import { BrandMark, CloseIcon, PlusIcon } from './icons.jsx';
 import { getWorkspaceActions } from './workspaceActions.js';
 import { Shortcut, hint, label } from './shortcuts.jsx';
-
-// Bare bespoke mark: a prompt chevron + cursor, drawn as paths (no tile
-// behind it). The chevron carries a tight two-stop amber gradient — the
-// only gradient in the whole UI, reserved for this one small glyph.
-//
-// It is not a logo parked in a corner. There is exactly one of these in the
-// window and it stands in front of the workflow you are in, so the app's own
-// mark is also the answer to "where am I" — the same job the chevron does at
-// the prompt inside every pane.
-function BrandMark({ theme }) {
-  const [from, to] = theme === 'light' ? ['#c98f36', '#7c4f13'] : ['#f0c481', '#c97f2e'];
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <defs>
-        <linearGradient id="brandGradient" x1="2" y1="3" x2="14" y2="13" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={from} />
-          <stop offset="1" stopColor={to} />
-        </linearGradient>
-      </defs>
-      <path
-        d="M3.2 4L7.6 8L3.2 12"
-        stroke="url(#brandGradient)"
-        strokeWidth="1.6"
-        strokeLinecap="square"
-        strokeLinejoin="miter"
-      />
-      <line x1="9.4" y1="12" x2="13.2" y2="12" stroke="url(#brandGradient)" strokeWidth="1.6" strokeLinecap="square" />
-    </svg>
-  );
-}
+import { normalizeFlags } from './flags.mjs';
+import Onboarding from './Onboarding.jsx';
 
 const THEME_LABELS = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
 // How far into a slot the mark stands. Every slot holds this lane open on its
 // left, so the one the mark is in looks no different in width from the rest.
 const MARK_INSET = 9;
+
+// A session that has never held anything: no file at all, or one whose
+// workflows are every one of them an empty canvas. Quitting straight out of
+// the onboarding writes exactly that second shape — one empty workflow,
+// saved on the way out — so counting it as "nothing yet" is what keeps the
+// screen from being spent on a launch where nobody read it.
+const isUntouched = (restored) =>
+  !restored || restored.workflows.every((workflow) => workflow.panes.length === 0);
 
 let workflowCounter = 0;
 function makeWorkflow() {
@@ -68,6 +48,18 @@ export default function App() {
   // as it is answered, so the number on the rail is the one the question was
   // about even if a command finishes while you are reading it.
   const [pendingClose, setPendingClose] = useState(null);
+  // The one-time screen a first launch opens on. False until the flags file
+  // has been read and found to say nothing, so it can never flash over a
+  // restored workspace on its way to being dismissed.
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  // The editor ⌘E opens a folder in, once someone has picked one. Held in
+  // state because a workspace renders from it; the rest of the flags file is
+  // only ever written, so it lives in the ref below.
+  const [editorPref, setEditorPref] = useState(null);
+  // The whole flags file as this app last understood it. Every write goes
+  // through patchFlags and sends the merged whole, because saveFlags replaces
+  // the file: writing one field on its own would silently drop the others.
+  const flagsRef = useRef(normalizeFlags(null));
 
   // ⌘T opens a workflow, ⌥⌘1..9 jumps straight to one. Held in refs so the
   // listeners never go stale as workflows come and go.
@@ -102,7 +94,27 @@ export default function App() {
         // A session that cannot be read is a lost layout, never a lost app.
         console.error('session restore failed:', err);
       }
+
+      // What this install has already been told. Its own file, so a session
+      // that had to be set aside does not also cost the answer to a question
+      // already asked — and read here rather than later because the onboarding
+      // has to be decided before the first paint, not after one.
+      let flags = normalizeFlags(null);
+      try {
+        const text = await window.terminalApi.loadFlags();
+        if (text) flags = normalizeFlags(JSON.parse(text));
+      } catch (err) {
+        // The worst an unreadable flags file can cost is one extra onboarding.
+        console.error('flags restore failed:', err);
+      }
       if (cancelled) return;
+
+      flagsRef.current = flags;
+      setEditorPref(flags.editor);
+
+      // In front of an empty canvas only. Someone with a workspace to come
+      // back to is not owed an introduction, whatever the flags file says.
+      if (!flags.seenOnboarding && isUntouched(restored)) setShowOnboarding(true);
 
       if (restored) {
         // Before any workspace mounts: a workspace that mounted first would
@@ -360,6 +372,28 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [addWorkflow]);
 
+  // One field at a time, but always the whole file on the way out. saveFlags
+  // replaces what is on disk, so sending `{ seenOnboarding: true }` on its own
+  // would take the editor preference with it — and sending `{ editor }` on its
+  // own would take the answer the onboarding recorded.
+  const patchFlags = useCallback((patch) => {
+    const next = normalizeFlags({ ...flagsRef.current, ...patch });
+    flagsRef.current = next;
+    setEditorPref(next.editor);
+    window.terminalApi.saveFlags(JSON.stringify(next));
+  }, []);
+
+  // Recorded as the screen goes rather than as it arrives, because what the
+  // file is really saying is that someone was here to read it. A launch that
+  // was quit out of leaves it unwritten, and isUntouched brings the screen
+  // back next time.
+  const dismissOnboarding = useCallback(() => {
+    setShowOnboarding(false);
+    patchFlags({ seenOnboarding: true });
+  }, [patchFlags]);
+
+  const rememberEditor = useCallback((app) => patchFlags({ editor: app }), [patchFlags]);
+
   // The one frame between the window appearing and the session arriving. The
   // window's own background colour is the app's, so this reads as the app
   // opening rather than as an empty page — and no rail is drawn holding
@@ -517,10 +551,24 @@ export default function App() {
             theme={theme}
             active={wf.id === activeId}
             initialState={initialStatesRef.current.get(wf.id)}
+            hideEmptyHint={showOnboarding}
+            editorPref={editorPref}
+            onEditorChosen={rememberEditor}
             onDirty={scheduleSave}
             onRequestClose={() => requestCloseWorkflow(wf.id)}
           />
         ))}
+
+        {showOnboarding && (
+          <Onboarding
+            theme={theme}
+            onSkip={dismissOnboarding}
+            onFinish={() => {
+              dismissOnboarding();
+              getWorkspaceActions(activeId)?.addTerminal('terminal');
+            }}
+          />
+        )}
 
         {pendingClose && (
           <div className="confirm-rail" role="alertdialog" aria-modal="true" aria-label="Confirm close">

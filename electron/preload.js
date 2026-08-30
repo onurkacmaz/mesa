@@ -24,6 +24,20 @@ contextBridge.exposeInMainWorld('terminalApi', {
   // fire-and-forget send has no one left to finish it: this blocks until the
   // file is written.
   saveSessionSync: (payload) => ipcRenderer.sendSync('session:save-sync', payload),
+
+  // What the app remembers about the person rather than about their work, in
+  // its own file for its own reasons (src/flags.mjs). Text in both directions,
+  // like the session, so only one side decides what a flags file is.
+  loadFlags: () => ipcRenderer.invoke('flags:load'),
+  saveFlags: (payload) => ipcRenderer.send('flags:save', payload),
+
+  // Every application on this Mac, unfiltered — which of them is an editor is
+  // decided in src/editors.mjs, where it can be tested.
+  listApplications: () => ipcRenderer.invoke('editor:list'),
+  openInEditor: (app, dir) => ipcRenderer.invoke('editor:open', { app, dir }),
+  // The system's application picker, for an editor the known list has never
+  // heard of. Resolves to a bundle name, or null if it was dismissed.
+  chooseApplication: () => ipcRenderer.invoke('editor:choose'),
   // A shortcut that was typed inside a browser pane and belongs to the app.
   onGuestShortcut: (callback) => {
     const listener = (event, init) => callback(init);

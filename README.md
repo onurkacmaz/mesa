@@ -50,12 +50,14 @@ line tools (`xcode-select --install`).
 | `⌥⌘1`–`⌥⌘9` | switch workflow |
 | `⌘W` | close the innermost thing: tab, then window, then workflow |
 | `⌘L` | focus a browser pane's address bar |
+| `⌘E` / `⇧⌘E` | open the selected terminal's folder in your editor / in a different one |
 | `⌘0` / `⇧⌘0` | actual size / fit everything |
 | `⌘` + scroll | zoom |
 | `space` + drag | pan |
 
 Drag across empty canvas to select several panes; drag a pane by its title bar
-to move it.
+to move it, double-click the title to rename it, right-click it for the editor
+menu.
 
 ## What it remembers
 
@@ -66,6 +68,19 @@ read back on launch.
 A pty dies with the app, so a restored terminal is a **fresh shell standing in
 the folder it was left in** — the layout comes back, the running processes do
 not.
+
+Answers to questions the app should only ask once — whether the onboarding
+cards have been read, and which editor `⌘E` opens folders in — live in
+`flags.json` beside it, not in the session. A session that cannot be parsed is
+set aside so the next save cannot overwrite it, and a rescued layout should not
+also cost an answer already given.
+
+`⌘E` opens the selected terminal's **current** folder, the one its shell last
+reported, in whichever editor you picked the first time you pressed it. Mesa
+does not embed an editor: it hands the folder to the one already installed.
+To change the answer, either press `⇧⌘E` or right-click a terminal's title bar
+— both list the editors on this Mac with the current one ticked, and picking
+one opens the folder and becomes the new default.
 
 ## What it does not do
 
@@ -92,12 +107,17 @@ src/Workspace.jsx     the canvas: pan, zoom, selection, pane lifecycle
 src/TerminalPane.jsx  one pane: title bar, tab strip, drag and resize
 src/TerminalView.jsx  xterm.js, wired to a pty
 src/BrowserView.jsx   a <webview> guest with its own chrome
+src/Onboarding.jsx    the one-time first-launch cards
 src/session.mjs       pure: what a session file is, and when to trust it
+src/flags.mjs         pure: what the app remembers about you, not your work
+src/editors.mjs       pure: which installed apps are editors, and which you chose
 ```
 
-`src/session.mjs` is deliberately free of React and the filesystem, which is
-why the part of persistence that can ruin a launch is also the part that is
-directly unit-tested.
+`src/session.mjs`, `src/flags.mjs` and `src/editors.mjs` are deliberately free
+of React and the filesystem, which is why the part of persistence that can ruin
+a launch is also the part that is directly unit-tested. `electron/main.js` can
+see the disk and nothing else: it hands over raw text and raw file names, and
+what any of it means is decided in those three files.
 
 ## Contributing
 

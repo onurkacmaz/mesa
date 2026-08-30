@@ -119,6 +119,7 @@ export default function TerminalPane({
   onTabAdd,
   onClose,
   onSelect,
+  onTitlebarMenu,
   onGroupDragStart,
   onGroupDrag,
   onGroupDragEnd
@@ -456,7 +457,21 @@ export default function TerminalPane({
       }}
       onMouseDown={(e) => onSelect(e.shiftKey)}
     >
-      <div className="pane-titlebar">
+      {/* Right-click asks Workspace to put a menu at the pointer. The menu is
+          drawn up there rather than in here because this pane lives inside the
+          canvas's transform: a menu rendered as a child of it would be scaled
+          with the canvas, and unreadable at any zoom below about 70%. */}
+      <div
+        className="pane-titlebar"
+        onContextMenu={
+          onTitlebarMenu
+            ? (e) => {
+                e.preventDefault();
+                onTitlebarMenu(e.clientX, e.clientY);
+              }
+            : undefined
+        }
+      >
         {/* The session's identity colour rides on this mark rather than on a
             strip down the edge — a bare glyph, no tile behind it. */}
         {isBrowser ? (

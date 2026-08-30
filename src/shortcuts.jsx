@@ -23,6 +23,11 @@ export const SHORTCUTS = {
   newBrowser: { keys: '⌘B', label: 'New browser' },
   closeSelection: { keys: '⌘W', label: 'Close selection' },
 
+  // E for editor. Held with shift it asks which one rather than using the
+  // remembered answer — the same key, one level up, the way ⌘0 and ⇧⌘0 relate.
+  openInEditor: { keys: '⌘E', label: "Open the pane's folder in an editor" },
+  chooseEditor: { keys: '⇧⌘E', label: 'Open in a different editor' },
+
   // The modifier on its own: held down, it turns the wheel into zoom. It is a
   // key like any other here, so it gets a cap like any other — what it must
   // not do is join to the next word with a "+", which in this app already

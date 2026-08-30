@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
+const { execFile } = require('node:child_process');
 
 let pty;
 try {
@@ -28,20 +29,26 @@ const GUEST_APP_KEYS = new Set(['w', 'n', 'b', 't', 'l']);
 // it is the same file an export would hand to someone else.
 const sessionPath = () => path.join(app.getPath('userData'), 'session.json');
 
+// The other thing kept next to the session: what the app remembers about the
+// person rather than about their work. Its own file because the two have
+// different lifetimes — the session is rewritten constantly and is archived
+// out of the way when it cannot be parsed, and a rescued layout should not
+// also cost the answers to questions already asked. See src/flags.mjs.
+const flagsPath = () => path.join(app.getPath('userData'), 'flags.json');
+
 // Written to a sibling first and renamed into place, because rename is atomic
 // and a write is not. Quitting mid-write is exactly when this file is being
 // touched, and a half-written JSON is the one failure that costs the whole
 // layout rather than the last few seconds of it.
-function writeSession(payload) {
+function writeTextAtomically(file, payload, what) {
   if (typeof payload !== 'string') return false;
-  const file = sessionPath();
   const temp = `${file}.tmp`;
   try {
     fs.writeFileSync(temp, payload, 'utf8');
     fs.renameSync(temp, file);
     return true;
   } catch (err) {
-    console.error('session write failed:', err.message);
+    console.error(`${what} write failed:`, err.message);
     try {
       fs.unlinkSync(temp);
     } catch {
@@ -49,6 +56,113 @@ function writeSession(payload) {
     }
     return false;
   }
+}
+
+const writeSession = (payload) => writeTextAtomically(sessionPath(), payload, 'session');
+
+// Unlike the session, a flags file that cannot be read is not set aside: there
+// is no layout in it worth preserving, and the next write should simply
+// replace it. Handed over as raw text for the renderer to make sense of, for
+// the same reason the session is — the rules for trusting a file live in one
+// testable place, not in main.
+function readFlags() {
+  try {
+    const text = fs.readFileSync(flagsPath(), 'utf8');
+    JSON.parse(text);
+    return text;
+  } catch {
+    return null; // no file yet, or one this app should just overwrite
+  }
+}
+
+const writeFlags = (payload) => writeTextAtomically(flagsPath(), payload, 'flags');
+
+// The two places a Mac keeps applications. A per-user install lives in the
+// second one and is just as real as a system-wide one.
+const applicationFolders = () => ['/Applications', path.join(os.homedir(), 'Applications')];
+
+// Every bundle name found, unfiltered. Which of them is an editor is decided
+// in src/editors.mjs for the same reason the shape of a session is decided in
+// src/session.mjs: main can see the disk, and nothing else — the knowledge
+// belongs in one place that a test can reach without a filesystem.
+//
+// One level down as well as the top: /Applications/Utilities holds a few, and
+// JetBrains Toolbox and the Adobe installers each keep their apps in a folder
+// of their own. Not recursive beyond that — a full walk of /Applications means
+// descending into every bundle's own contents, which is thousands of entries
+// for nothing.
+function listApplications() {
+  const names = new Set();
+  const read = (folder) => {
+    try {
+      return fs.readdirSync(folder, { withFileTypes: true });
+    } catch {
+      return []; // no such folder, which is normal for ~/Applications
+    }
+  };
+  for (const folder of applicationFolders()) {
+    for (const entry of read(folder)) {
+      if (entry.name.endsWith('.app')) {
+        names.add(entry.name);
+      } else if (entry.isDirectory()) {
+        for (const inner of read(path.join(folder, entry.name))) {
+          if (inner.name.endsWith('.app')) names.add(inner.name);
+        }
+      }
+    }
+  }
+  return [...names];
+}
+
+// The way out of a fixed list: the system's own application picker. What comes
+// back is a bundle name, the same currency everything else here deals in, so a
+// hand-picked editor is remembered and validated exactly like a known one.
+//
+// Restricted to the folders that are already trusted for opening — picking an
+// app from somewhere else would be accepted here and then refused at launch,
+// which is worse than not offering it.
+async function chooseApplication(win) {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Choose an editor',
+    message: 'Pick the application Mesa should open folders in.',
+    defaultPath: '/Applications',
+    properties: ['openFile', 'treatPackageAsDirectory'],
+    filters: [{ name: 'Applications', extensions: ['app'] }]
+  });
+  if (canceled || !filePaths?.length) return null;
+  const picked = filePaths[0];
+  if (!picked.endsWith('.app')) return null;
+  const name = path.basename(picked, '.app');
+  return listApplications().includes(`${name}.app`) ? name : null;
+}
+
+// `open -a <app> <dir>`, run through execFile with an argument array and no
+// shell, so nothing in either string can be read as syntax.
+//
+// Both arguments are checked here even though both come from this app's own
+// renderer. The folder is whatever a shell last reported through OSC 7, which
+// is to say a string a running process chose; and the app name has been out to
+// disk and back through a JSON file anyone could have edited. So: the folder
+// must be an absolute path that is really a directory, and the application
+// must be one this machine actually has, in the folders listApplications
+// looks at. An editor uninstalled since the preference was written fails here
+// rather than launching something else with a similar name.
+function openInEditor({ app: appName, dir }) {
+  if (typeof appName !== 'string' || !appName) return false;
+  if (typeof dir !== 'string' || !path.isAbsolute(dir)) return false;
+  try {
+    if (!fs.statSync(dir).isDirectory()) return false;
+  } catch {
+    return false; // gone, or never there
+  }
+  if (!listApplications().includes(`${appName}.app`)) return false;
+
+  execFile('open', ['-a', appName, dir], (err) => {
+    // Nothing to hand back: the reply went out the moment the launch was
+    // accepted, and a failure this late is macOS's to report, not the canvas's.
+    if (err) console.error('editor launch failed:', err.message);
+  });
+  return true;
 }
 
 // Handed to the renderer as raw text, which validates it: main has no business
@@ -477,6 +591,25 @@ app.whenReady().then(() => {
   ipcMain.on('session:save-sync', (event, payload) => {
     event.returnValue = writeSession(payload);
   });
+
+  ipcMain.handle('flags:load', () => readFlags());
+
+  // Not debounced the way the session is: flags change a handful of times in
+  // the life of an install, and each change is the answer to a question that
+  // must not be asked twice.
+  ipcMain.on('flags:save', (event, payload) => {
+    writeFlags(payload);
+  });
+
+  ipcMain.handle('editor:list', () => listApplications());
+
+  ipcMain.handle('editor:open', (event, payload) => openInEditor(payload ?? {}));
+
+  // Sheeted onto the window that asked, so it arrives attached to Mesa rather
+  // than as a loose dialog on the desktop.
+  ipcMain.handle('editor:choose', (event) =>
+    chooseApplication(BrowserWindow.fromWebContents(event.sender))
+  );
 
   ipcMain.on('terminal:close', (event, { id }) => {
     const term = terminals.get(id);
