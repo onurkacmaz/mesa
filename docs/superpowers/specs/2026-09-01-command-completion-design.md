@@ -82,27 +82,56 @@ autoload -Uz add-zle-hook-widget
 __mesa_zle_sync() {
   [[ $BUFFER == $__mesa_last ]] && return
   __mesa_last=$BUFFER
-  printf '\e]1717;L;%d;%s\a' "$CURSOR" "${(V)BUFFER}"
+  local b=${BUFFER//\\/\\\\}
+  b=${b//$'\n'/\\n}; b=${b//$'\r'/\\r}
+  b=${b//$'\e'/\\e}; b=${b//$'\a'/\\a}; b=${b//$'\t'/\\t}
+  [[ $b == *[[:cntrl:]]* ]] && return
+  printf '\e]1717;L;%d;%s\a' "$CURSOR" "$b"
 }
 add-zle-hook-widget line-pre-redraw __mesa_zle_sync
 ```
 
-Three decisions worth keeping:
+Four decisions worth keeping:
 
 **`add-zle-hook-widget`, not `zle -N` on the hook name.** Defining
 `zle-line-pre-redraw` directly clobbers whatever else claims it, which breaks
 `zsh-autosuggestions` and `zsh-syntax-highlighting`. The whole hook file is
 built on "nothing the user's config does is overwritten"; this follows it.
 
-**`${(V)BUFFER}`, not base64.** `$BUFFER` can hold ESC, BEL and newlines, all
-of which would corrupt the OSC sequence. zsh has no base64 builtin, so
-encoding would mean a fork on every keystroke. `${(V)…}` is a parameter
-expansion flag — no fork — and renders control characters printably: ESC
-becomes `^[`, newline `\n`, tab `\t`.
+**Explicit escaping, not `${(V)}` and not base64.** `$BUFFER` can hold ESC,
+BEL and newlines, any of which would corrupt the OSC sequence. zsh has no
+base64 builtin, so that route means a fork per keystroke.
 
-**The buffer is the last field.** `${(V)…}` leaves `;` literal, which would
+`${(V)BUFFER}` looks like the fork-free answer — it is a parameter expansion
+flag that renders control characters printably — but it was measured and it is
+**lossy in two independent ways**, and a lossy feed makes `zleBuffer.mjs`
+impossible to write correctly:
+
+- It does not escape backslashes, so a literal `\n` (backslash, then `n`) and
+  a real newline both arrive as `\n`.
+- It renders ESC in caret notation as `^[`, which a literal caret-bracket is
+  indistinguishable from. `grep "^[a-z]"` is an ordinary command, not a
+  contrived edge case.
+
+The substitutions above are unambiguous because the backslash is escaped
+first, and they never use caret notation, so a literal `^[` survives verbatim.
+All of it is parameter expansion — no fork, no subshell. Measured under a real
+pty: `grep "^[a-z]" ığş` round-trips exactly, multi-byte characters included,
+with `$CURSOR` counting characters rather than bytes.
+
+The `[[:cntrl:]]` guard fails closed. Any control character not on the escape
+list can only be entered with `^V`, and for such a line the feed stays silent
+and the dropdown simply does not open — which is the same policy as the rest
+of this design: no list beats a wrong list.
+
+**The buffer is the last field.** Escaping leaves `;` literal, which would
 collide with the OSC field separator. Putting the buffer last costs nothing:
 the renderer splits on the first two separators and takes the rest verbatim.
+
+`printf` writes to stdout, with no `/dev/tty` redirect. That is not an
+assumption carried over from `__wfterm_osc`, which runs in `precmd` rather
+than inside a ZLE widget: it was verified separately from inside
+`line-pre-redraw`.
 
 **The dedupe guard is not an optimisation.** `line-pre-redraw` fires on every
 redraw, not every change — cursor movement and syntax highlighting repaint the
@@ -116,7 +145,7 @@ like `railReorder.mjs` and `session.mjs`.
 
 | Module | Responsibility |
 |---|---|
-| `zleBuffer.mjs` | Decode `${(V)}` escaping back to a real string |
+| `zleBuffer.mjs` | Decode the hook's escaping back to a real string |
 | `commandLine.mjs` | buffer + cursor → tokens; which token is being completed, is it in command position, is it inside quotes |
 | `schema.mjs` | Walk a CLI schema: `git ch` → subcommands, `git checkout -` → flags |
 | `rank.mjs` | Merge sources, fuzzy match, score, dedupe, cap |
@@ -172,6 +201,14 @@ So the dropdown renders **inside the pane**, next to the terminal, positioned
 from `term.buffer.active.cursorX/cursorY` times the cell size. It scales with
 the canvas for free, with no correction maths.
 
+**It flips above the cursor when it does not fit below.** The prompt sits at
+the bottom of the scrollback — that is the steady state, not an edge case — so
+a list drawn downward lands outside the pane and is eaten by its clip. The
+rule: with a list of `n` rows and `term.rows - cursorY - 1` rows left below,
+draw downward only while the remaining rows are at least `n`, otherwise draw
+upward from the cursor row. If neither direction fits, `n` shrinks to whatever
+the larger side can hold. No row is ever half-drawn against the pane edge.
+
 It is hard-hidden while a TUI owns the alternate buffer (`tuiRef.current`).
 There is no shell line then, and the same guard already protects the OSC 133
 `A` marker.
@@ -205,6 +242,13 @@ already moved the cursor to the end. `^E` itself works in `viins` only because
 the existing gap-filling table in `.zshenv` binds it there. No new binding is
 needed.
 
+**A multi-line candidate is sent with `\x1b\r` in place of each newline.**
+`~/.zsh_history` holds multi-line entries, and Mesa's own Shift+Enter widget
+creates them. Sending such a candidate as raw text would submit it at the
+first newline — running half a command. `\x1b\r` is the sequence the existing
+widget already binds to insert a newline into the line buffer without
+submitting, so accepting a multi-line entry reproduces it intact.
+
 ## Failure behaviour
 
 If OSC 1717 never arrives — the shell is not zsh, or the user's configuration
@@ -216,7 +260,9 @@ shadow buffer. A list built on a guess is worse than no list.
 Unit tests under `test/`, run by `node --test`, following the existing
 pattern:
 
-- `zleBuffer.test.mjs` — decoding buffers containing ESC, newline, tab and `;`
+- `zleBuffer.test.mjs` — decoding buffers containing ESC, newline, tab and `;`,
+  and the two cases that ruled out `${(V)}`: a literal backslash-n, and a
+  literal `^[` as in `grep "^[a-z]"`
 - `commandLine.test.mjs` — tokenizing: inside quotes, command position, cursor
   mid-line
 - `schema.test.mjs` — `git ch` → subcommands, `git checkout -` → flags
