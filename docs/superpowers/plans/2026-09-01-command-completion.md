@@ -257,9 +257,13 @@ __wfterm_zle_sync() {
   b=${b//$'\t'/\\t}
 
   # Anything still holding a control character needed ^V to type. Rather than
-  # guess at an encoding for it, say nothing: the list simply does not open
-  # for that line, which is the same policy as everywhere else here.
-  [[ $b == *[[:cntrl:]]* ]] && return
+  # guess at an encoding for it, report that there is no line to complete —
+  # which the app reads as "close the list". Going silent here would have left
+  # a list open against a line it can no longer describe.
+  if [[ $b == *[[:cntrl:]]* ]]; then
+    printf '\e]1717;X\a'
+    return
+  fi
 
   printf '\e]1717;L;%d;%s\a' "$CURSOR" "$b"
 }
@@ -281,6 +285,14 @@ And call it from `__wfterm_precmd`, inside the existing `__wfterm_prompt_ready` 
     __wfterm_setup_keys
     __wfterm_setup_completion
 ```
+
+And clear the remembered line once per prompt, after the `vcs_info` line in `__wfterm_precmd`:
+
+```zsh
+  __wfterm_last_buffer=
+```
+
+Without this the comparison outlives the command it belonged to: run `ls`, press Up to recall it, and the recalled line matches what is still stored, so nothing is reported and the list never opens for it. History recall is the case this feed exists to get right.
 
 - [ ] **Step 2: Verify it fires under a real pty**
 
@@ -1657,10 +1669,14 @@ const { parseZshHistory } = require('../src/zshHistory.mjs');
 
 const completionGenerators = generators(parseZshHistory);
 
-ipcMain.handle('completion:candidates', async (_event, { cwd, generator }) => {
+ipcMain.handle('completion:candidates', async (_event, { cwd, generator, prefix }) => {
   const produce = completionGenerators[generator];
   if (!produce) return [];
-  return produce(resolveCwd(cwd));
+  const all = await produce(resolveCwd(cwd));
+  // Filtered HERE, not in the renderer. The path generator alone is thousands
+  // of entries, and shipping all of them across IPC on every keystroke is the
+  // difference between a list that appears instantly and one that stutters.
+  return filterByPrefix(all, prefix);
 });
 ```
 

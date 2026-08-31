@@ -469,10 +469,14 @@ export default function TerminalView({
     // this and the completion list never opens — rather than being fed a
     // guess reconstructed from keystrokes.
     const oscLineDisposable = term.parser.registerOscHandler(1717, (data) => {
+      // A payload that does not describe a line — the hook's own "there is no
+      // line to complete" marker, or anything malformed — is passed on as
+      // null, which closes the list. Swallowing it would leave a list open
+      // against a line nothing can describe any more.
       const line = parseZleOsc(data);
       // A TUI owns the whole screen and has no shell line behind it. Same
       // guard as the OSC 133 prompt marker, for the same reason.
-      if (line && !tuiRef.current) onLineChangeRef.current?.(line);
+      if (!tuiRef.current) onLineChangeRef.current?.(line);
       return true;
     });
 

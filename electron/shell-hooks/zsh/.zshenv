@@ -114,6 +114,14 @@ __wfterm_precmd() {
   fi
   [[ -n $__wfterm_vcs ]] && vcs_info
 
+  # Forget what the last line held. The comparison in __wfterm_zle_sync is
+  # against the last line REPORTED, and that value would otherwise outlive the
+  # command it belonged to: run `ls`, then press Up to recall it, and the
+  # recalled line matches what is still stored, so nothing is reported and the
+  # completion list never opens for it. History recall is exactly the case
+  # this whole feed exists to get right, so the memory is cleared per prompt.
+  __wfterm_last_buffer=
+
   # OSC 7 reports the working directory, so the pane's titlebar can show
   # where the session actually is instead of a static label.
   printf '\e]7;file://%s%s\a' "${HOST}" "${PWD}"
@@ -175,9 +183,13 @@ __wfterm_zle_sync() {
   b=${b//$'\t'/\\t}
 
   # Anything still holding a control character needed ^V to type. Rather than
-  # guess at an encoding for it, say nothing: the list simply does not open
-  # for that line, which is the same policy as everywhere else here.
-  [[ $b == *[[:cntrl:]]* ]] && return
+  # guess at an encoding for it, report that there is no line to complete —
+  # which the app reads as "close the list". Going silent here would have left
+  # a list open against a line it can no longer describe.
+  if [[ $b == *[[:cntrl:]]* ]]; then
+    printf '\e]1717;X\a'
+    return
+  fi
 
   printf '\e]1717;L;%d;%s\a' "$CURSOR" "$b"
 }
