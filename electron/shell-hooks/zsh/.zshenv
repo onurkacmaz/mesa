@@ -110,6 +110,7 @@ __wfterm_precmd() {
     __wfterm_prompt_ready=1
     __wfterm_setup_prompt
     __wfterm_setup_keys
+    __wfterm_setup_completion
   fi
   [[ -n $__wfterm_vcs ]] && vcs_info
 
@@ -141,3 +142,51 @@ __wfterm_preexec() {
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd __wfterm_precmd
 add-zsh-hook preexec __wfterm_preexec
+
+# What is currently being typed, so the app can offer a completion list for
+# it. Mesa does not own the input line — ZLE does — so the only honest
+# source for "what is on the line" is ZLE itself. Reconstructing it from
+# keystrokes was rejected: it desyncs silently on history recall, on paste, on
+# the shell's own Tab completion, and on the ^W/^U the app itself sends, and a
+# list built on a buffer that lies is worse than no list.
+#
+# add-zle-hook-widget rather than `zle -N zle-line-pre-redraw`: defining that
+# widget directly clobbers whatever else claims it, which would break
+# zsh-autosuggestions and zsh-syntax-highlighting. Additive, like every other
+# hook in this file.
+__wfterm_zle_sync() {
+  # line-pre-redraw fires on every redraw, not every change — moving the
+  # cursor and syntax highlighting repaint the line too — so this compares
+  # before emitting rather than making the app recompute for nothing.
+  [[ $BUFFER == $__wfterm_last_buffer ]] && return
+  __wfterm_last_buffer=$BUFFER
+
+  # $BUFFER can hold ESC, BEL and newlines, any of which would corrupt the
+  # sequence. zsh has no base64 builtin and this runs on every keystroke, so
+  # encoding must not fork: these are all parameter expansions. The backslash
+  # goes first, which is what makes a literal \n and a real newline tell
+  # apart. Caret notation is deliberately not used — zsh's own ${(V)} does,
+  # and it makes a real ESC indistinguishable from the ^[ in `grep "^[a-z]"`.
+  local b=${BUFFER//\\/\\\\}
+  b=${b//$'\n'/\\n}
+  b=${b//$'\r'/\\r}
+  b=${b//$'\e'/\\e}
+  b=${b//$'\a'/\\a}
+  b=${b//$'\t'/\\t}
+
+  # Anything still holding a control character needed ^V to type. Rather than
+  # guess at an encoding for it, say nothing: the list simply does not open
+  # for that line, which is the same policy as everywhere else here.
+  [[ $b == *[[:cntrl:]]* ]] && return
+
+  printf '\e]1717;L;%d;%s\a' "$CURSOR" "$b"
+}
+
+# Registered from precmd rather than here, for the same reason
+# __wfterm_setup_keys is: ZLE does not exist outside the line editor, so
+# add-zle-hook-widget calls `zle -N` at file scope and simply fails, returning
+# 1 without a word. The first prompt is the earliest moment it takes.
+__wfterm_setup_completion() {
+  autoload -Uz add-zle-hook-widget
+  add-zle-hook-widget line-pre-redraw __wfterm_zle_sync
+}

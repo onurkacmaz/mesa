@@ -264,8 +264,22 @@ __wfterm_zle_sync() {
   printf '\e]1717;L;%d;%s\a' "$CURSOR" "$b"
 }
 
-autoload -Uz add-zle-hook-widget
-add-zle-hook-widget line-pre-redraw __wfterm_zle_sync
+# Registered from precmd rather than here, for the same reason
+# __wfterm_setup_keys is: ZLE does not exist outside the line editor, so
+# add-zle-hook-widget calls `zle -N` at file scope and simply fails, returning
+# 1 without a word. The first prompt is the earliest moment it takes.
+__wfterm_setup_completion() {
+  autoload -Uz add-zle-hook-widget
+  add-zle-hook-widget line-pre-redraw __wfterm_zle_sync
+}
+```
+
+And call it from `__wfterm_precmd`, inside the existing `__wfterm_prompt_ready` guard, beside `__wfterm_setup_keys`:
+
+```zsh
+    __wfterm_setup_prompt
+    __wfterm_setup_keys
+    __wfterm_setup_completion
 ```
 
 - [ ] **Step 2: Verify it fires under a real pty**
