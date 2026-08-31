@@ -1478,6 +1478,11 @@ button:focus-visible {
   font-size: 12px;
   white-space: nowrap;
   max-width: 220px;
+  /* A name is something you press and something you carry, never something
+     you sweep a text cursor through — and a double click on one opens the
+     rename field, which would otherwise leave the old name highlighted behind
+     the new field. */
+  user-select: none;
   transition: color 110ms ease;
 }
 
@@ -1496,6 +1501,7 @@ button:focus-visible {
 }
 
 .workflow-tab-input {
+  user-select: text;
   background: var(--pane-screen);
   border: 1px solid var(--border);
   color: var(--text-strong);
@@ -1535,6 +1541,70 @@ button:focus-visible {
    the mark on a rail that has no boxes anywhere else on it. */
 .workflow-tab-close:hover {
   color: var(--danger-text);
+}
+
+/* ── Carrying a workflow along the rail ───────────────────────────────────
+   The rail is one length of material with the workflows scored into it, so
+   rearranging it is not a card being lifted off a surface — there is no card
+   and there is no surface. Nothing rises, nothing casts a shadow, nothing is
+   painted behind the name in hand: it comes up to full ink and travels with
+   the pointer, and the names it passes step aside on the same curve the mark
+   has always used to move between slots.
+
+   The scores go while the rail is being rearranged. A cut says where one
+   workflow ends and the next begins, and mid-gesture there is no such answer
+   — a fixed score with a name sliding across it says something untrue. The
+   rail comes apart into plain names for as long as the hand is on it, and is
+   scored again the moment it is let go. It is also what makes the drop
+   readable without a line drawn where the name will land: the row itself has
+   already opened the space. */
+.workflow-rail .rail-cut {
+  transition: opacity 120ms ease;
+}
+
+.workflow-rail-dragging {
+  cursor: grabbing;
+}
+
+.workflow-rail-dragging .rail-cut {
+  opacity: 0;
+}
+
+/* Only while a drag is on. Off it, the transform is not a property that ever
+   changes — and it must not be one at the moment of the drop, when the row is
+   rewritten and every transform comes off in the same commit: a transition
+   live in that frame would animate each name back from where it already is. */
+.workflow-rail-dragging .workflow-tab {
+  transition: color 110ms ease, transform 240ms cubic-bezier(0.22, 0.68, 0.16, 1);
+}
+
+/* The rail quietens while it is being rearranged. The name in hand passes over
+   the others, and on a rail with no boxes on it two names at the same strength
+   crossing would simply be two words printed on each other — a step of ink
+   between them is what keeps the one you are holding readable. */
+.workflow-rail-dragging .workflow-tab {
+  color: var(--text-dim);
+}
+
+/* The one in hand answers the pointer directly. Anything eased here is the
+   name lagging behind the hand carrying it. */
+.workflow-rail-dragging .workflow-tab-carried,
+.workflow-rail-dragging .rail-mark-carried {
+  transition: none;
+}
+
+.workflow-rail-dragging .workflow-tab-carried {
+  color: var(--text-strong);
+  /* Above the names it is passing, so it reads as the one being moved rather
+     than as two names printed over each other. */
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-rail-dragging .workflow-tab {
+    transition: color 110ms ease;
+  }
 }
 
 /* The empty slot at the end of the rail. Ink like everything else up here: no

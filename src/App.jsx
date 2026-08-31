@@ -6,6 +6,7 @@ import { BrandMark, CloseIcon, PlusIcon } from './icons.jsx';
 import { getWorkspaceActions } from './workspaceActions.js';
 import { Shortcut, hint, label } from './shortcuts.jsx';
 import { normalizeFlags } from './flags.mjs';
+import { clampOffset, dropIndex, gapBetween, reorder, slideFor } from './railReorder.mjs';
 import Onboarding from './Onboarding.jsx';
 
 const THEME_LABELS = { auto: 'Auto', light: 'Light', dark: 'Dark' };
@@ -33,6 +34,18 @@ function makeWorkflow() {
 // would be a write per frame; a pause of this length means the file is written
 // once the hand comes off, and never during the movement itself.
 const SAVE_DEBOUNCE_MS = 800;
+
+// How far the pointer travels before a press on a name becomes a drag rather
+// than a click. Small enough that the gesture answers straight away, wide
+// enough that the hand shake in a click never reorders the rail.
+const DRAG_THRESHOLD = 4;
+
+// A drop is followed by the click that ends the same press, and the press
+// after that would otherwise arrive as a double click and open the rename
+// field. This is the window in which a second press is read as the tail of the
+// drag rather than as a new gesture — the length of the system's own double
+// click interval, since that is exactly the pairing being undone.
+const DRAG_SETTLE_MS = 500;
 
 export default function App() {
   // null until the last session has been read back. Nothing is rendered
@@ -268,6 +281,102 @@ export default function App() {
     return () => observer.disconnect();
   }, [activeId, workflows]);
 
+  // Taking a workflow along the rail to put it somewhere else in the row.
+  //
+  // The order in state changes exactly once, on release. Everything before
+  // that is a transform: the name in hand tracks the pointer, the names it
+  // passes step aside by the width of the hole it left, and nothing reflows —
+  // which is what keeps the boxes measured at the start true for the whole
+  // gesture, and what keeps a terminal from being re-laid-out because a name
+  // above it moved.
+  //
+  // Pointer events rather than the drag-and-drop API: that one insists on
+  // painting a translucent copy of the element and dropping it with a hop, and
+  // the rail has no boxes to lift. Here the name simply goes where the hand
+  // goes.
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null);
+  const droppedAtRef = useRef(0);
+
+  // The rest of the gesture is listened for on the window rather than on the
+  // name, and setPointerCapture is not used at all. Capture is the tidy answer
+  // and it does not hold here: a release measured over the title bar — the
+  // strip the rail itself sits in, a hand's width from where the drag started
+  // — never arrives, and the drop is silently lost. The window hears every
+  // release wherever it lands.
+  const moveDrag = useCallback((e) => {
+    const state = dragRef.current;
+    if (!state || e.pointerId !== state.pointerId) return;
+    const travelled = e.clientX - state.startX;
+    if (!state.moved) {
+      if (Math.abs(travelled) < DRAG_THRESHOLD) return;
+      state.moved = true;
+    }
+    const dx = clampOffset(state.rects, state.from, travelled);
+    state.to = dropIndex(state.rects, state.from, dx);
+    setDrag({ from: state.from, to: state.to, dx, distance: state.distance });
+  }, []);
+
+  // The reorder and the end of the drag are one commit, so the transforms come
+  // off in the same frame the row is rewritten. Each name's new slot is
+  // exactly where its transform had already carried it, which is why the drop
+  // is still rather than a jump followed by a slide back.
+  const endDrag = useCallback(
+    (e) => {
+      const state = dragRef.current;
+      if (!state || e.pointerId !== state.pointerId) return;
+      dragRef.current = null;
+      window.removeEventListener('pointermove', moveDrag);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      setDrag(null);
+      if (!state.moved) return;
+      droppedAtRef.current = performance.now();
+      if (state.to !== state.from) {
+        setWorkflows((prev) => reorder(prev, state.from, state.to));
+      }
+    },
+    [moveDrag]
+  );
+
+  const beginDrag = (e, index) => {
+    if (e.button !== 0) return; // a right press is a menu, not a gesture
+    if (renamingId) return; // the field owns the pointer while it is open
+    if (e.target.closest('.workflow-tab-close')) return;
+    const open = workflowsRef.current ?? [];
+    if (open.length < 2) return; // one name is already in the only order there is
+    const rects = open.map((wf) => {
+      const el = slotRefs.current.get(wf.id);
+      return { left: el?.offsetLeft ?? 0, width: el?.offsetWidth ?? 0 };
+    });
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      from: index,
+      to: index,
+      rects,
+      // The hole a name leaves behind is its own width plus the gap and the
+      // cut scored beside it, both of which are the stylesheet's business — so
+      // they are read off the rail rather than repeated here.
+      distance: rects[index].width + gapBetween(rects),
+      moved: false
+    };
+    window.addEventListener('pointermove', moveDrag);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+  };
+
+  // A window this app is quitting out of mid-drag, which is the only way these
+  // outlive the gesture that added them.
+  useEffect(
+    () => () => {
+      window.removeEventListener('pointermove', moveDrag);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+    },
+    [moveDrag, endDrag]
+  );
+
   const addWorkflow = useCallback(() => {
     const wf = makeWorkflow();
     setWorkflows((prev) => [...prev, wf]);
@@ -400,26 +509,54 @@ export default function App() {
   // workflows that are about to be replaced by the real ones.
   if (!workflows) return null;
 
+  // The mark rides the same two rules as the names: carried with the one it
+  // stands in front of, or stepped aside by the one going past it.
+  const activeIndex = workflows.findIndex((wf) => wf.id === activeId);
+  const markShift = !drag
+    ? 0
+    : activeIndex === drag.from
+      ? drag.dx
+      : slideFor(activeIndex, drag.from, drag.to, drag.distance);
+
   return (
     <div className="app">
       {/* The title bar is the workflow strip: the app's identity, then the
           workflows themselves, sitting in the window's own drag region beside
           the traffic lights. */}
       <header className={`titlebar${fullScreen ? ' titlebar-fullscreen' : ''}`}>
-        <div className="workflow-rail" role="tablist" aria-label="Workflows" ref={railRef}>
+        <div
+          className={`workflow-rail${drag ? ' workflow-rail-dragging' : ''}`}
+          role="tablist"
+          aria-label="Workflows"
+          ref={railRef}
+        >
           {/* One mark for the whole rail, riding above the slots on its own
               lane. aria-hidden because it says nothing a screen reader is not
-              already told by aria-selected. */}
+              already told by aria-selected.
+
+              It stands in front of a workflow, so when that workflow is the
+              one being carried it goes with it — a mark left behind at the
+              slot the name has just left would be pointing at nothing. Carried
+              it travels with the hand and so keeps no transition; pushed aside
+              by a name passing it, it moves on the same curve as the names. */}
           <span
-            className="rail-mark"
+            className={`rail-mark${
+              drag ? (activeIndex === drag.from ? ' rail-mark-carried' : '') : ''
+            }`}
             aria-hidden="true"
-            style={{ transform: `translateX(${markX}px)` }}
+            style={{ transform: `translateX(${markX + markShift}px)` }}
           >
             <BrandMark theme={theme} />
           </span>
 
           {workflows.map((wf, index) => {
             const isActive = wf.id === activeId;
+            const carried = drag?.from === index;
+            const shift = !drag
+              ? 0
+              : carried
+                ? drag.dx
+                : slideFor(index, drag.from, drag.to, drag.distance);
             return (
               <React.Fragment key={wf.id}>
                 {/* A cut between slots, not a border around them: the rail is
@@ -432,9 +569,18 @@ export default function App() {
                 }}
                 role="tab"
                 aria-selected={isActive}
-                className={`workflow-tab${isActive ? ' workflow-tab-active' : ''}`}
+                className={`workflow-tab${isActive ? ' workflow-tab-active' : ''}${
+                  carried ? ' workflow-tab-carried' : ''
+                }`}
+                style={shift ? { transform: `translateX(${shift}px)` } : undefined}
+                onPointerDown={(e) => beginDrag(e, index)}
                 onClick={() => setActiveId(wf.id)}
                 onDoubleClick={() => {
+                  // Two quick drags in a row end in a double click that was
+                  // never one. The rename field opening on top of a rail
+                  // someone is still rearranging is the worst kind of
+                  // surprise: it swallows the next keystrokes.
+                  if (performance.now() - droppedAtRef.current < DRAG_SETTLE_MS) return;
                   setNameDraft(wf.name);
                   setRenamingId(wf.id);
                 }}
