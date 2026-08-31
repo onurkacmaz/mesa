@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { registerTerminal, unregisterTerminal } from './terminalRegistry.js';
 import { COMMAND_ROW_BG, COMMAND_RULE, DANGER, TERMINAL_THEMES } from './theme.js';
 import { OSC_ST, hexToOscRgb, oscPaletteColor, parseOscColor, terminalThemeName } from './terminalOsc.mjs';
+import { parseZleOsc } from './zleBuffer.mjs';
 
 // One live session: an xterm instance bound to one pty. Every open tab keeps
 // its own mounted instance, including the ones you cannot see — that is the
@@ -28,7 +29,8 @@ export default function TerminalView({
   scale,
   active,
   focused,
-  onStatus
+  onStatus,
+  onLineChange
 }) {
   const hostRef = useRef(null);
   const termRef = useRef(null);
@@ -52,6 +54,8 @@ export default function TerminalView({
   accentRef.current = accent;
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
+  const onLineChangeRef = useRef(onLineChange);
+  onLineChangeRef.current = onLineChange;
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
   const draggingRef = useRef(false);
@@ -313,6 +317,9 @@ export default function TerminalView({
       if (kind === 'C') {
         sawCommand = true;
         report({ runningSince: Date.now() });
+        // The line has been submitted, so there is nothing to complete
+        // against until the next prompt.
+        onLineChangeRef.current?.(null);
 
         // The command you ran gets a lit row of its own, so a long scrollback
         // reads as a stack of blocks instead of undifferentiated text. Uses
@@ -434,6 +441,9 @@ export default function TerminalView({
     const applyTuiLayout = (isAlt) => {
       tuiRef.current = isAlt;
       report({ tui: isAlt });
+      // A TUI has no shell line behind it, so anything the completion list is
+      // still holding is stale the moment one takes the screen.
+      if (isAlt) onLineChangeRef.current?.(null);
       hostRef.current?.classList.toggle('pane-body-tui', isAlt);
       // The shell's command blocks belong to the normal screen and would
       // otherwise keep painting over the TUI (see the block store above).
@@ -449,6 +459,22 @@ export default function TerminalView({
       applyTuiLayout(buffer.type === 'alternate');
     });
     applyTuiLayout(term.buffer.active.type === 'alternate');
+
+    // What the shell has on its input line, reported by the ZLE hook in
+    // electron/shell-hooks/zsh/.zshenv. This is the only honest source for
+    // it: the line belongs to ZLE, not to us.
+    //
+    // Silence is a valid state and the whole fallback story. A shell that is
+    // not zsh, or one whose config displaced the hook, simply never sends
+    // this and the completion list never opens — rather than being fed a
+    // guess reconstructed from keystrokes.
+    const oscLineDisposable = term.parser.registerOscHandler(1717, (data) => {
+      const line = parseZleOsc(data);
+      // A TUI owns the whole screen and has no shell line behind it. Same
+      // guard as the OSC 133 prompt marker, for the same reason.
+      if (line && !tuiRef.current) onLineChangeRef.current?.(line);
+      return true;
+    });
 
     const oscCwdDisposable = term.parser.registerOscHandler(7, (data) => {
       const match = /^file:\/\/[^/]*(\/.*)$/.exec(data);
@@ -528,6 +554,7 @@ export default function TerminalView({
       oscBgResetDisposable.dispose();
       bufferDisposable.dispose();
       oscCwdDisposable.dispose();
+      oscLineDisposable.dispose();
       csiEraseDisplay.dispose();
       resizeObserver.disconnect();
       unregisterTerminal(tabId);
