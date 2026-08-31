@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('terminalApi', {
   close: (id) => ipcRenderer.send('terminal:close', { id }),
   gitBranch: (dir) => ipcRenderer.invoke('git:branch', dir),
 
+  // What could come next on the line being typed. Asked per keystroke, so
+  // the filtering and the caching both live on the other side.
+  candidates: (request) => ipcRenderer.invoke('completion:candidates', request),
+
   // The session travels as text in both directions. Structured clone would
   // work, but text is what lands on disk, so sending anything else would mean
   // two places deciding what a session is.

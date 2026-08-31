@@ -360,6 +360,30 @@ function shellForPlatform() {
 // terminal (VS Code, iTerm2, Warp) spawns login shells for this reason.
 //
 // -l is a POSIX-shell flag (zsh, bash, fish all take it); powershell does not.
+// The completion sources, and the two pure functions from src/ they need.
+//
+// Loaded with a dynamic import because this file is CommonJS and those are ES
+// modules; a plain require of them throws. Until the import settles the
+// generators answer from an empty history and match nothing, which is the
+// right behaviour for the first few milliseconds of a launch — the shell has
+// not drawn a prompt yet, so nothing is asking.
+const { generators, filterForWire } = require('./completionSources');
+
+let parseZshHistory = () => [];
+let completionMatchScore = () => null;
+const completionGenerators = generators((text) => parseZshHistory(text));
+
+Promise.all([import('../src/zshHistory.mjs'), import('../src/rank.mjs')])
+  .then(([historyModule, rankModule]) => {
+    parseZshHistory = historyModule.parseZshHistory;
+    completionMatchScore = rankModule.matchScore;
+  })
+  .catch((err) => {
+    // The dropdown is the only thing that stops working, and it stops by
+    // offering nothing rather than by offering something wrong.
+    console.warn('completion sources unavailable', err);
+  });
+
 function shellArgs() {
   return process.platform === 'win32' ? [] : ['-l'];
 }
@@ -571,6 +595,19 @@ app.whenReady().then(() => {
     } catch {
       return null;
     }
+  });
+
+  // What could come next on the line the renderer is watching. Everything
+  // that needs a disk or a subprocess lives on this side; the renderer only
+  // ranks and draws what comes back.
+  ipcMain.handle('completion:candidates', async (event, request) => {
+    const { cwd, generator, prefix } = request ?? {};
+    const produce = completionGenerators[generator];
+    // A generator name that is not in the table resolves to nothing. That is
+    // what keeps a schema from asking for anything it likes.
+    if (!produce) return [];
+    const all = await produce(resolveCwd(cwd));
+    return filterForWire(all, typeof prefix === 'string' ? prefix : '', completionMatchScore);
   });
 
   ipcMain.handle('session:load', () => readSession());

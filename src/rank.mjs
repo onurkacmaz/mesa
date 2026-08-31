@@ -15,7 +15,13 @@
 const SOURCE_RANK = { schema: 0, history: 1, file: 2, path: 3 };
 
 // Higher is better; null means no match at all.
-function matchScore(value, prefix) {
+//
+// Exported because the main process has to make the SAME judgement before
+// sending candidates over IPC — PATH alone is a few thousand names and
+// shipping all of them per keystroke stutters. Filtering there with a plain
+// startsWith would have quietly killed the fuzzy match: `gco` would never
+// reach this file to become `git checkout`.
+export function matchScore(value, prefix) {
   if (prefix === '') return 0;
   if (value.startsWith(prefix)) return 3;
   const lowerValue = value.toLowerCase();
