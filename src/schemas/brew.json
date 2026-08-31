@@ -1,0 +1,15 @@
+{
+  "name": "brew",
+  "subcommands": [
+    { "name": "install", "options": [{ "name": "--cask", "description": "a macOS app" }] },
+    { "name": "uninstall" },
+    { "name": "upgrade" },
+    { "name": "update" },
+    { "name": "search" },
+    { "name": "info" },
+    { "name": "list" },
+    { "name": "services", "subcommands": [{ "name": "start" }, { "name": "stop" }, { "name": "restart" }, { "name": "list" }] },
+    { "name": "doctor" },
+    { "name": "cleanup" }
+  ]
+}

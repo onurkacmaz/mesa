@@ -1,0 +1,14 @@
+{
+  "name": "kubectl",
+  "subcommands": [
+    { "name": "get", "subcommands": [{ "name": "pods" }, { "name": "services" }, { "name": "deployments" }, { "name": "nodes" }],
+      "options": [{ "name": "-A", "description": "every namespace" },
+                  { "name": "-o", "description": "output format" }] },
+    { "name": "describe", "subcommands": [{ "name": "pod" }, { "name": "service" }, { "name": "deployment" }] },
+    { "name": "logs", "options": [{ "name": "-f", "description": "keep following" }] },
+    { "name": "apply", "options": [{ "name": "-f", "description": "from a file" }] },
+    { "name": "delete", "options": [{ "name": "-f", "description": "from a file" }] },
+    { "name": "exec", "options": [{ "name": "-it", "description": "interactive, with a terminal" }] },
+    { "name": "config", "subcommands": [{ "name": "use-context" }, { "name": "get-contexts" }, { "name": "current-context" }] }
+  ]
+}
