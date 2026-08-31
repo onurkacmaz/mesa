@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { CanvasAddon } from '@xterm/addon-canvas';
@@ -7,6 +7,13 @@ import { registerTerminal, unregisterTerminal } from './terminalRegistry.js';
 import { COMMAND_ROW_BG, COMMAND_RULE, DANGER, TERMINAL_THEMES } from './theme.js';
 import { OSC_ST, hexToOscRgb, oscPaletteColor, parseOscColor, terminalThemeName } from './terminalOsc.mjs';
 import { parseZleOsc } from './zleBuffer.mjs';
+import { completionContext } from './commandLine.mjs';
+import { schemaCandidates } from './schema.mjs';
+import { SCHEMAS } from './schemas/index.mjs';
+import { rankCandidates } from './rank.mjs';
+import { acceptSequence } from './acceptCandidate.mjs';
+import { getPaneCwd } from './paneCwd.js';
+import CompletionList from './CompletionList.jsx';
 
 // One live session: an xterm instance bound to one pty. Every open tab keeps
 // its own mounted instance, including the ones you cannot see — that is the
@@ -29,8 +36,7 @@ export default function TerminalView({
   scale,
   active,
   focused,
-  onStatus,
-  onLineChange
+  onStatus
 }) {
   const hostRef = useRef(null);
   const termRef = useRef(null);
@@ -54,13 +60,96 @@ export default function TerminalView({
   accentRef.current = accent;
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
-  const onLineChangeRef = useRef(onLineChange);
-  onLineChangeRef.current = onLineChange;
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
+  // The OSC handler is registered once at mount, so it reaches the current
+  // handler through a ref rather than closing over the one that existed then.
+  const onLineChangeRef = useRef(null);
+  // Which request is the current one. Bumped on every reported line, so an
+  // answer that arrives late can tell that it is answering an old question.
+  const lineGenerationRef = useRef(0);
+
+  // What the completion list is currently offering, and the same value in a
+  // ref: the key handler is attached once at mount and would otherwise close
+  // over the state as it stood then.
+  const [completion, setCompletion] = useState(null);
+  const completionRef = useRef(null);
+  completionRef.current = completion;
+
   const draggingRef = useRef(false);
   const tuiRef = useRef(false);
   const repaintBlocksRef = useRef(null);
+
+  // Putting a chosen candidate on the line. The line is cleared and retyped
+  // rather than patched, because the app cannot move ZLE's cursor around
+  // reliably enough to edit in place — see acceptCandidate.mjs for why the two
+  // keys that clear it are ^E and ^U and not the obvious ^K.
+  const acceptCompletion = useCallback((open, index) => {
+    const item = open?.items[index];
+    if (!item) return;
+    window.terminalApi.input(
+      tabId,
+      acceptSequence({
+        buffer: open.line.buffer,
+        cursor: open.line.cursor,
+        start: open.context.start,
+        value: item.value
+      })
+    );
+    setCompletion(null);
+  }, [tabId]);
+
+  // Everything the list offers for the line the shell just reported.
+  //
+  // The sources are gathered per keystroke, but only the ranking happens here:
+  // the reads and the caching live in the main process, and it filters before
+  // answering, because PATH alone is a couple of thousand names.
+  const handleLineChange = useCallback((line) => {
+    if (!line) {
+      setCompletion(null);
+      return;
+    }
+    const context = completionContext(line.buffer, line.cursor);
+    const generation = (lineGenerationRef.current += 1);
+
+    (async () => {
+      const schema = SCHEMAS[context.words[0]];
+      const fromSchema = schema
+        ? schemaCandidates(schema, context.words, context.prefix)
+        : [];
+
+      // A schema node that names a generator is asking for live values. The
+      // marker itself is never shown — rankCandidates drops it, having no
+      // value — and stands in for what the generator returns.
+      const generator = fromSchema.find((c) => c.generator)?.generator;
+      const wanted = [
+        'history',
+        context.position === 'command' ? 'path' : 'files',
+        ...(generator ? [generator] : [])
+      ];
+
+      const cwd = getPaneCwd(tabId);
+      const live = (
+        await Promise.all(
+          wanted.map((name) =>
+            window.terminalApi
+              .candidates({ cwd, generator: name, prefix: context.prefix })
+              .catch(() => [])
+          )
+        )
+      ).flat();
+
+      // Answers arrive out of order, and a slow one for a line the user has
+      // already typed past would otherwise replace a newer list with a stale
+      // one. Only the most recent request may write.
+      if (generation !== lineGenerationRef.current) return;
+
+      const items = rankCandidates([...fromSchema, ...live], context.prefix);
+      setCompletion(items.length ? { items, context, line, selected: 0 } : null);
+    })();
+  }, [tabId]);
+
+  onLineChangeRef.current = handleLineChange;
 
   useEffect(() => {
     const report = (patch) => onStatusRef.current?.(tabId, patch);
@@ -178,6 +267,39 @@ export default function TerminalView({
         event.preventDefault();
         window.terminalApi.input(tabId, '\x1b\r');
         return false;
+      }
+
+      // The completion list claims four keys, and only while it is open.
+      //
+      // Tab is deliberately not among them, open or closed. zsh users lean on
+      // compsys and their own plugins, and Mesa does not own the line the way
+      // Warp does — shadowing the shell's own completion would be a regression
+      // for exactly the people most likely to notice.
+      //
+      // The arrows are claimed only while the list is open, because with it
+      // closed Up is history recall and taking that would break something
+      // basic.
+      const open = completionRef.current;
+      if (open && !event.metaKey && !event.altKey && !event.ctrlKey) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          const count = open.items.length;
+          setCompletion((c) =>
+            c ? { ...c, selected: (c.selected + step + count) % count } : c
+          );
+          return false;
+        }
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          acceptCompletion(open, open.selected);
+          return false;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setCompletion(null);
+          return false;
+        }
       }
 
       const match = MAC_LINE_EDITING.find(
@@ -703,11 +825,30 @@ export default function TerminalView({
     if (focused) termRef.current?.focus();
   }, [focused]);
 
+  const term = termRef.current;
+  // Drawn as a SIBLING of the host element, never a child: xterm owns that
+  // element's children and React must not reconcile against them. Both are
+  // absolutely positioned in the same pane, so the list still lands in the
+  // pane's own coordinates and rides the canvas transform with it.
   return (
-    <div
-      className={`pane-body${active ? '' : ' pane-body-hidden'}`}
-      data-terminal-id={tabId}
-      ref={hostRef}
-    />
+    <>
+      <div
+        className={`pane-body${active ? '' : ' pane-body-hidden'}`}
+        data-terminal-id={tabId}
+        ref={hostRef}
+      />
+      {completion && active && term ? (
+        <CompletionList
+          items={completion.items}
+          selected={completion.selected}
+          cursorRow={term.buffer.active.cursorY}
+          cursorCol={term.buffer.active.cursorX}
+          termRows={term.rows}
+          cellWidth={term._core._renderService.dimensions.css.cell.width}
+          cellHeight={term._core._renderService.dimensions.css.cell.height}
+          onPick={(i) => acceptCompletion(completion, i)}
+        />
+      ) : null}
+    </>
   );
 }

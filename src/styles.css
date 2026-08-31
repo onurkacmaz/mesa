@@ -2545,3 +2545,55 @@ button:focus-visible {
   color: var(--accent);
   white-space: nowrap;
 }
+
+/* The completion list, drawn in the pane's own coordinates so it rides the
+   canvas transform with everything else. Mesa's own surface, like .pane-menu:
+   square, the pane's frame and border, one directional shadow. Deliberately
+   NOT built on .cr-menu, which is the browser pane's Chrome furniture. */
+.completion-list {
+  position: absolute;
+  z-index: 9400;
+  display: flex;
+  flex-direction: column;
+  min-width: 18ch;
+  max-width: 62ch;
+  overflow: hidden;
+  background: var(--pane-frame);
+  border: 1px solid var(--pane-border);
+  box-shadow: var(--shadow-rail);
+}
+
+.completion-row {
+  appearance: none;
+  display: flex;
+  gap: 1.5ch;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: default;
+}
+
+.completion-row-on {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.completion-value {
+  white-space: pre;
+}
+
+/* What the candidate is for, not what it is: it must never compete with the
+   command itself for the eye. */
+.completion-description {
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
