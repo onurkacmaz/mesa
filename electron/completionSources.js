@@ -110,16 +110,17 @@ async function pathExecutables() {
 // by the renderer, and the file itself only grows.
 let historyCache = null;
 
-async function history(parseZshHistory) {
+async function history(parseZshHistory, unmetafy) {
   if (historyCache) return historyCache;
   try {
     const file = process.env.HISTFILE || path.join(os.homedir(), '.zsh_history');
-    // zsh writes this file in its own eight-bit metafied encoding, so a stray
-    // byte is normal and must not throw. 'latin1' keeps every byte and never
-    // rejects one; UTF-8 text still compares correctly against a prefix that
-    // came through the same door.
-    const text = await fs.readFile(file, 'latin1');
-    historyCache = parseZshHistory(text);
+    // Read as BYTES and unmetafied by the parser, not decoded here. zsh writes
+    // this file in its own metafied encoding, and neither obvious decoding
+    // survives it: `grep "^[a-z]" ığş` comes back as `Ä±Ä¿Å¿` through latin1
+    // and as `ıă<?>Ń<?>` through UTF-8. Either way the command is not what the
+    // user typed and would never match it again.
+    const bytes = await fs.readFile(file);
+    historyCache = parseZshHistory(unmetafy(bytes));
   } catch {
     historyCache = [];
   }
@@ -138,17 +139,32 @@ async function history(parseZshHistory) {
 // offering completions does not justify a second writer.
 function rememberCommand(command) {
   if (!historyCache) return; // nothing read yet; the file will carry it
+  const now = Math.floor(Date.now() / 1000);
   const at = historyCache.findIndex((entry) => entry.value === command);
+  // Running it again is one more run of the same command, not a new one.
+  // Dropping the count here would have quietly demoted the commands used most,
+  // which are exactly the ones most likely to be run again.
+  const count = at === -1 ? 1 : historyCache[at].count + 1;
   if (at !== -1) historyCache.splice(at, 1);
   // One past the highest recency there is, so it outranks everything read
   // from the file — it is, by definition, the most recent thing you ran.
   const newest = (historyCache[historyCache.length - 1]?.recency ?? 0) + 1;
-  historyCache.push({ value: command, source: 'history', recency: newest });
+  // freshness 1: it is, by definition, the most recent thing run. Without it
+  // the command you just ran would be scored as though it had no recency at
+  // all — worse than one read from the middle of the file.
+  historyCache.push({
+    value: command,
+    source: 'history',
+    recency: newest,
+    count,
+    at: now,
+    freshness: 1
+  });
 }
 
 // The whole table. A generator name that is not a key here resolves to
 // nothing, which is what keeps a schema from reaching anything it likes.
-function generators(parseZshHistory) {
+function generators(parseZshHistory, unmetafy) {
   return {
     files: (cwd) => cached(`files:${cwd}`, () => entries(cwd, false)),
     directories: (cwd) => cached(`dirs:${cwd}`, () => entries(cwd, true)),
@@ -156,7 +172,7 @@ function generators(parseZshHistory) {
     'npm-scripts': (cwd) => cached(`scripts:${cwd}`, () => npmScripts(cwd)),
     'ssh-hosts': () => cached('ssh', () => sshHosts()),
     path: () => cached('path', () => pathExecutables()),
-    history: () => history(parseZshHistory)
+    history: () => history(parseZshHistory, unmetafy)
   };
 }
 
@@ -169,16 +185,13 @@ const WIRE_LIMIT = 200;
 // executable per keystroke is the difference between a list that appears
 // instantly and one that stutters.
 //
-// It uses rank.mjs's own matcher rather than a local startsWith, and that is
-// not tidiness: a plain prefix test here would silently kill the fuzzy match,
-// because `gco` would be discarded in this process and never reach the file
-// that would have turned it into `git checkout`. One judgement, one place.
+// It uses rank.mjs's own matcher rather than a local one, so the two sides
+// never disagree about what counts as a match: one judgement, one place.
+//
 // The cut is by SCORE, not by whoever the directory scan happened to reach
-// first. Taking the first 200 matches looked equivalent and was not: `git`
-// also matches `antigravity` and `mysql_config_editor` as a subsequence, and
-// on a PATH of two thousand names those filled the wire and pushed `git`
-// itself off it. The renderer would then have ranked a list that never
-// contained the obvious answer.
+// first. Taking the first 200 looked equivalent and was not — a case-exact
+// match could be pushed off the wire by two hundred case-insensitive ones and
+// never reach the renderer at all.
 function filterForWire(candidates, prefix, matchScore) {
   if (!prefix) return candidates.slice(0, WIRE_LIMIT);
   const scored = [];

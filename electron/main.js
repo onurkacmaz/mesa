@@ -385,8 +385,12 @@ function unpacked(p) {
 }
 
 let parseZshHistory = () => [];
+let unmetafyHistory = (buffer) => buffer.toString('utf8');
 let completionMatchScore = () => null;
-const completionGenerators = generators((text) => parseZshHistory(text));
+const completionGenerators = generators(
+  (text) => parseZshHistory(text),
+  (bytes) => unmetafyHistory(bytes)
+);
 
 Promise.all(
   ['zshHistory.mjs', 'rank.mjs'].map((name) =>
@@ -395,6 +399,7 @@ Promise.all(
 )
   .then(([historyModule, rankModule]) => {
     parseZshHistory = historyModule.parseZshHistory;
+    unmetafyHistory = historyModule.unmetafy;
     completionMatchScore = rankModule.matchScore;
   })
   .catch((err) => {

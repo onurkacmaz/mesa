@@ -1,15 +1,18 @@
 // Which candidates are offered, and in what order.
 //
-// Pure, like railReorder.mjs: candidates and a prefix in, an ordered list
-// out. Nothing here knows where a candidate came from beyond the name of its
+// Pure, like railReorder.mjs: candidates and a prefix in, an ordered list out.
+// Nothing here knows where a candidate came from beyond the name of its
 // source.
 //
-// The ordering is three rules deep and each earns its place. How well the
-// prefix matches comes first, because a solid prefix is what the user is
-// obviously reaching for and a scattered match is a guess. The source breaks
-// the tie, because a schema entry is something the CLI genuinely accepts
-// here, while a file only happens to share some letters. Recency settles the
-// rest, which is what makes history feel like it is reading your mind.
+// PREFIX ONLY. There was a subsequence match here — every letter of the query
+// appearing in order, so `gco` would find `git checkout` — and it had to go.
+// It is the reason `npm` offered `claude-work --resume Session 412e...`, which
+// contains an n, a p and an m in that order and nothing else in common with
+// what was typed. One clever hit is not worth a list full of commands that
+// have no visible relationship to the prefix. Warp's own inline history menu
+// makes the same call: `if !normalized_text.starts_with(trimmed_query)
+// { continue; }` — it keeps fuzzy matching for conversation titles, where
+// there is nothing better, and never for commands.
 
 // Source order, most authoritative first.
 const SOURCE_RANK = { schema: 0, history: 1, file: 2, path: 3 };
@@ -18,36 +21,85 @@ const SOURCE_RANK = { schema: 0, history: 1, file: 2, path: 3 };
 //
 // Exported because the main process has to make the SAME judgement before
 // sending candidates over IPC — PATH alone is a few thousand names and
-// shipping all of them per keystroke stutters. Filtering there with a plain
-// startsWith would have quietly killed the fuzzy match: `gco` would never
-// reach this file to become `git checkout`.
+// shipping all of them per keystroke stutters.
 export function matchScore(value, prefix) {
   if (prefix === '') return 0;
-  if (value.startsWith(prefix)) return 3;
-  const lowerValue = value.toLowerCase();
-  const lowerPrefix = prefix.toLowerCase();
-  if (lowerValue.startsWith(lowerPrefix)) return 2;
-
-  // Subsequence: every letter of the prefix appears in order, which is what
-  // turns `gco` into `git checkout`.
-  let at = 0;
-  for (const ch of lowerPrefix) {
-    at = lowerValue.indexOf(ch, at);
-    if (at === -1) return null;
-    at += 1;
-  }
-  return 1;
+  if (value.startsWith(prefix)) return 2;
+  if (value.toLowerCase().startsWith(prefix.toLowerCase())) return 1;
+  return null;
 }
 
-export function rankCandidates(candidates, prefix, limit = 8) {
+const HOUR = 3600;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+
+// How much a command is worth offering: how often it has been run, weighted by
+// how recently. Frequency alone would pin `clear` (86 runs) to the top of
+// everything beginning with c forever; recency alone lets a typo run once an
+// hour ago outrank the command run sixty times this week, which is exactly
+// what was happening. The multipliers are the shape zoxide and Mozilla's
+// frecency both use.
+//
+// How recent the last run was, as a multiplier. Real time when the history
+// file carries timestamps, and the entry's own position in that file when it
+// does not — which is the common case, because EXTENDED_HISTORY is off by
+// default. Both are cut into the same four steps, because the point is to
+// separate "just now", "recently" and "a while back", not to be precise.
+function recencyBoost({ at, freshness }, now) {
+  if (at) {
+    const age = Math.max(0, now - at);
+    if (age < HOUR) return 4;
+    if (age < DAY) return 2;
+    if (age < WEEK) return 0.5;
+    return 0.25;
+  }
+  if (typeof freshness !== 'number') return 1;
+  if (freshness >= 0.9) return 4;
+  if (freshness >= 0.75) return 2;
+  if (freshness >= 0.5) return 0.5;
+  return 0.25;
+}
+
+export function frecency(candidate, now) {
+  // Diminishing returns, deliberately. A raw count grows without limit, and
+  // then nothing can outrank it: `clear`, run 86 times but not for a month,
+  // still beat a command used three times this morning, because 86 × the
+  // oldest penalty is more than 3 × the freshest bonus. On a log scale the
+  // 86th run is worth far less than the 3rd, which is also true of how much it
+  // predicts the 87th.
+  const runs = Math.log2(1 + Math.max(1, candidate.count ?? 1));
+  return runs * recencyBoost(candidate, now);
+}
+
+// Two prefixes, because two kinds of candidate are being matched against two
+// different things. A schema subcommand, a filename or an executable completes
+// the WORD under the cursor. A history entry is a whole command line and
+// completes the LINE — matching `cd RubymineProjects/sonar` against the word
+// after `cd ` (which is empty) let every command in the file through, so `cd `
+// offered `gs`, `claude` and `exit`. Warp matches history the same way, against
+// the entire input rather than the last word.
+//
+// A bare string is read as both, which is the ordinary case at the start of a
+// line where the word and the line are the same thing.
+function prefixesFrom(prefix) {
+  return typeof prefix === 'string' ? { word: prefix, line: prefix } : prefix;
+}
+
+export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() / 1000) {
+  const { word, line } = prefixesFrom(prefix);
   const scored = [];
   for (const candidate of candidates) {
+    const against = candidate.source === 'history' ? line : word;
     // A generator marker carries no value, and a candidate identical to what
     // is already typed would accept to a no-op.
-    if (!candidate.value || candidate.value === prefix) continue;
-    const score = matchScore(candidate.value, prefix);
+    if (!candidate.value || candidate.value === against) continue;
+    const score = matchScore(candidate.value, against);
     if (score === null) continue;
-    scored.push({ candidate, score });
+    scored.push({
+      candidate,
+      score,
+      weight: frecency(candidate, now)
+    });
   }
 
   scored.sort((a, b) => {
@@ -55,6 +107,8 @@ export function rankCandidates(candidates, prefix, limit = 8) {
     const sourceDelta =
       (SOURCE_RANK[a.candidate.source] ?? 9) - (SOURCE_RANK[b.candidate.source] ?? 9);
     if (sourceDelta !== 0) return sourceDelta;
+    if (a.weight !== b.weight) return b.weight - a.weight;
+    // Nothing to choose between them but which was seen last.
     return (b.candidate.recency ?? 0) - (a.candidate.recency ?? 0);
   });
 

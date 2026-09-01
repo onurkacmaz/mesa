@@ -97,7 +97,9 @@ export default function TerminalView({
     const write = {
       buffer: open.line.buffer,
       cursor: open.line.cursor,
-      start: open.context.start,
+      // A history entry is a whole command line and replaces the whole line;
+      // everything else replaces the word under the cursor.
+      start: item.source === 'history' ? 0 : open.context.start,
       value: item.value
     };
     // Remembered before the write, because the shell echoes the new line back
@@ -172,12 +174,19 @@ export default function TerminalView({
         ...(generator ? [generator] : [])
       ];
 
+      // A history entry is a whole command line, so it is matched against the
+      // whole line rather than the word under the cursor.
+      const lineSoFar = line.buffer.slice(0, line.cursor);
       const cwd = getPaneCwd(tabId);
       const live = (
         await Promise.all(
           wanted.map((name) =>
             window.terminalApi
-              .candidates({ cwd, generator: name, prefix: context.prefix })
+              .candidates({
+                cwd,
+                generator: name,
+                prefix: name === 'history' ? lineSoFar : context.prefix
+              })
               .catch(() => [])
           )
         )
@@ -188,7 +197,10 @@ export default function TerminalView({
       // one. Only the most recent request may write.
       if (generation !== lineGenerationRef.current) return;
 
-      const items = rankCandidates([...fromSchema, ...live], context.prefix);
+      const items = rankCandidates([...fromSchema, ...live], {
+        word: context.prefix,
+        line: lineSoFar
+      });
       setCompletion(items.length ? { items, context, line, selected: 0 } : null);
     })();
   }, [tabId]);
