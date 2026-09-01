@@ -3,7 +3,7 @@
   "version": "1.5.0",
   "private": true,
   "description": "Terminals on an infinite canvas",
-  "author": "Onur Kaçmaz <kacmaz.onur@hotmail.com>",
+  "author": "Onur Ka\u00e7maz <kacmaz.onur@hotmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/onurkacmaz/mesa",
   "repository": {
@@ -35,11 +35,15 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "src/zshHistory.mjs",
+      "src/rank.mjs"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*",
-      "electron/shell-hooks/**/*"
+      "electron/shell-hooks/**/*",
+      "src/zshHistory.mjs",
+      "src/rank.mjs"
     ],
     "mac": {
       "target": [

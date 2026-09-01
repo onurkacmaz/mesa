@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('terminalApi', {
   // What could come next on the line being typed. Asked per keystroke, so
   // the filtering and the caching both live on the other side.
   candidates: (request) => ipcRenderer.invoke('completion:candidates', request),
+  // A command that was just run, so the next prompt can offer it. Fire and
+  // forget: nothing waits on it and nothing breaks if it is lost.
+  rememberCommand: (command) => ipcRenderer.send('completion:remember', command),
 
   // The session travels as text in both directions. Structured clone would
   // work, but text is what lands on disk, so sending anything else would mean

@@ -71,6 +71,10 @@ export default function TerminalView({
   // The line a candidate was just accepted onto. The shell reports that line
   // straight back, and without this it is indistinguishable from typing.
   const acceptedRef = useRef(null);
+  // The last line the shell reported. Read when a command starts, so what you
+  // just ran is offered at the very next prompt rather than only after zsh
+  // flushes it to disk and the app is restarted.
+  const lastLineRef = useRef('');
 
   // What the completion list is currently offering, and the same value in a
   // ref: the key handler is attached once at mount and would otherwise close
@@ -102,6 +106,11 @@ export default function TerminalView({
     // like it did nothing.
     acceptedRef.current = acceptedLine(write);
     window.terminalApi.input(tabId, acceptSequence(write));
+    // Cleared here as well as through state: the ref is only refreshed in the
+    // render body, so until React comes back around it still holds the open
+    // list — and a held-down Enter would accept a second time, sending a
+    // replacement built from a line that has already moved on.
+    completionRef.current = null;
     setCompletion(null);
   }, [tabId]);
 
@@ -115,9 +124,10 @@ export default function TerminalView({
       setCompletion(null);
       return;
     }
-    // The echo of a candidate just accepted, not a keystroke. Cleared as it is
-    // consumed, so the very next real edit to that same line opens a list
-    // again.
+    // The last line seen before a command starts is that command. The OSC 133
+    // C marker says one was submitted but does not carry its text, so this is
+    // where the text comes from.
+    lastLineRef.current = line.buffer;
     // Every report invalidates whatever is still in flight, this one included.
     // Clearing the list without bumping the generation was not enough: writing
     // the accepted line makes the shell redraw an empty buffer first, and that
@@ -331,6 +341,7 @@ export default function TerminalView({
         }
         if (event.key === 'Escape') {
           event.preventDefault();
+          completionRef.current = null;
           setCompletion(null);
           return false;
         }
@@ -474,7 +485,10 @@ export default function TerminalView({
         sawCommand = true;
         report({ runningSince: Date.now() });
         // The line has been submitted, so there is nothing to complete
-        // against until the next prompt.
+        // against until the next prompt — and what was on it is now a command
+        // that has been run, which is the freshest history there is.
+        if (lastLineRef.current) window.terminalApi.rememberCommand(lastLineRef.current);
+        lastLineRef.current = '';
         onLineChangeRef.current?.(null);
 
         // The command you ran gets a lit row of its own, so a long scrollback

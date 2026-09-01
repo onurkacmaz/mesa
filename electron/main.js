@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const os = require('node:os');
 const fs = require('node:fs');
 const { execFile } = require('node:child_process');
@@ -367,13 +368,31 @@ function shellForPlatform() {
 // generators answer from an empty history and match nothing, which is the
 // right behaviour for the first few milliseconds of a launch — the shell has
 // not drawn a prompt yet, so nothing is asking.
-const { generators, filterForWire } = require('./completionSources');
+//
+// The path needs the same care shellHooksDir takes, for the same reason. Both
+// files are listed under build.files and asarUnpack: without the first they
+// are not in a packaged app at all, and without the second they live inside
+// app.asar, where a dynamic import of an ES module does not reliably go
+// through Electron's patched fs. Either way the import would reject, the
+// fallbacks below would stand, and — because the fallback matcher returns
+// null for everything — filterForWire would drop every candidate. The
+// dropdown would offer schema subcommands and nothing else, in a build that
+// looked fine in dev. It is spelled out here because that failure is silent.
+const { generators, filterForWire, rememberCommand } = require('./completionSources');
+
+function unpacked(p) {
+  return p.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+}
 
 let parseZshHistory = () => [];
 let completionMatchScore = () => null;
 const completionGenerators = generators((text) => parseZshHistory(text));
 
-Promise.all([import('../src/zshHistory.mjs'), import('../src/rank.mjs')])
+Promise.all(
+  ['zshHistory.mjs', 'rank.mjs'].map((name) =>
+    import(pathToFileURL(unpacked(path.join(__dirname, '..', 'src', name))).href)
+  )
+)
   .then(([historyModule, rankModule]) => {
     parseZshHistory = historyModule.parseZshHistory;
     completionMatchScore = rankModule.matchScore;
@@ -608,6 +627,15 @@ app.whenReady().then(() => {
     if (!produce) return [];
     const all = await produce(resolveCwd(cwd));
     return filterForWire(all, typeof prefix === 'string' ? prefix : '', completionMatchScore);
+  });
+
+  // A command the user just ran. zsh will write it to the history file
+  // eventually, but "eventually" is on its own schedule and usually means the
+  // shell exiting — so what you ran a moment ago would not be offered until
+  // the app was restarted, which is the half of this feature that is supposed
+  // to feel like it is reading your mind.
+  ipcMain.on('completion:remember', (event, command) => {
+    if (typeof command === 'string' && command.trim()) rememberCommand(command);
   });
 
   ipcMain.handle('session:load', () => readSession());

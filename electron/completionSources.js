@@ -126,6 +126,26 @@ async function history(parseZshHistory) {
   return historyCache;
 }
 
+// A command just run in this app, put at the front of the history it offers.
+//
+// zsh does write it to the history file, but on its own schedule — usually
+// when the shell exits — so without this the thing you ran a moment ago is not
+// offered again until the app is restarted. That is the half of the feature
+// that is supposed to feel like it is reading your mind.
+//
+// It goes only into this process's own list. The file itself is never written
+// to: zsh owns it, another shell may be appending to it at this moment, and
+// offering completions does not justify a second writer.
+function rememberCommand(command) {
+  if (!historyCache) return; // nothing read yet; the file will carry it
+  const at = historyCache.findIndex((entry) => entry.value === command);
+  if (at !== -1) historyCache.splice(at, 1);
+  // One past the highest recency there is, so it outranks everything read
+  // from the file — it is, by definition, the most recent thing you ran.
+  const newest = (historyCache[historyCache.length - 1]?.recency ?? 0) + 1;
+  historyCache.push({ value: command, source: 'history', recency: newest });
+}
+
 // The whole table. A generator name that is not a key here resolves to
 // nothing, which is what keeps a schema from reaching anything it likes.
 function generators(parseZshHistory) {
@@ -170,4 +190,4 @@ function filterForWire(candidates, prefix, matchScore) {
   return scored.slice(0, WIRE_LIMIT).map((s) => s.candidate);
 }
 
-module.exports = { generators, filterForWire };
+module.exports = { generators, filterForWire, rememberCommand };
