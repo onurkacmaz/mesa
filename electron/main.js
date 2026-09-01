@@ -408,6 +408,28 @@ Promise.all(
     console.warn('completion sources unavailable', err);
   });
 
+// The schemas imported from warpdotdev/command-signatures. Read on demand and
+// cached, including the misses: a command with no schema is the common case
+// (anything not in the set) and must not cost a stat on every keystroke.
+const schemaCache = new Map();
+
+function readCommandSchema(command) {
+  // The name reaches a filesystem path, and it came from a shell's report of
+  // what someone typed. Anything but a plain command name is refused rather
+  // than joined onto a directory.
+  if (typeof command !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(command)) return null;
+  if (schemaCache.has(command)) return schemaCache.get(command);
+  let schema = null;
+  try {
+    const file = path.join(__dirname, 'command-schemas', `${command}.json`);
+    schema = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    schema = null; // no schema for this command, which is ordinary
+  }
+  schemaCache.set(command, schema);
+  return schema;
+}
+
 function shellArgs() {
   return process.platform === 'win32' ? [] : ['-l'];
 }
@@ -620,6 +642,12 @@ app.whenReady().then(() => {
       return null;
     }
   });
+
+  // One command's schema, read the first time that command is typed and kept
+  // after that. Nearly 500 of them ship, five and a half megabytes in total —
+  // bundling that into the renderer would put it in memory at launch and in
+  // the download forever, for the one or two commands a session actually uses.
+  ipcMain.handle('completion:schema', (event, command) => readCommandSchema(command));
 
   // What could come next on the line the renderer is watching. Everything
   // that needs a disk or a subprocess lives on this side; the renderer only

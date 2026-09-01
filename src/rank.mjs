@@ -23,7 +23,15 @@ const SOURCE_RANK = { schema: 0, history: 1, file: 2, path: 3 };
 // sending candidates over IPC — PATH alone is a few thousand names and
 // shipping all of them per keystroke stutters.
 export function matchScore(value, prefix) {
-  if (prefix === '') return 0;
+  // An empty prefix matches everything, and matches it EQUALLY WELL — the same
+  // score a solid prefix earns, not a worse one. The two kinds of candidate are
+  // scored against different strings (a schema entry against the word under the
+  // cursor, a history entry against the whole line), so a low score here is not
+  // comparable with a high one there. Scoring the empty case 0 made `docker `
+  // score its 57 subcommands below every past docker command line and the
+  // schema never appeared at all. With nothing to tell candidates apart, the
+  // source is what should decide, and it does.
+  if (prefix === '') return 2;
   if (value.startsWith(prefix)) return 2;
   if (value.toLowerCase().startsWith(prefix.toLowerCase())) return 1;
   return null;

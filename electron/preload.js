@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('terminalApi', {
   // What could come next on the line being typed. Asked per keystroke, so
   // the filtering and the caching both live on the other side.
   candidates: (request) => ipcRenderer.invoke('completion:candidates', request),
+  // The shape of one command, read from disk the first time it is typed.
+  commandSchema: (command) => ipcRenderer.invoke('completion:schema', command),
   // A command that was just run, so the next prompt can offer it. Fire and
   // forget: nothing waits on it and nothing breaks if it is lost.
   rememberCommand: (command) => ipcRenderer.send('completion:remember', command),

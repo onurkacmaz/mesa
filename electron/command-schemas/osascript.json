@@ -1,0 +1,1 @@
+{"name":"osascript","description":"Execute OSA scripts (AppleScript, JavaScript, etc.)","options":[{"name":"-e","description":"Enter one line of a script"},{"name":"-i","description":"Interactive mode"},{"name":"-l","description":"Override the language for any plain text files"},{"name":"-s","description":"Modify the output style"}]}

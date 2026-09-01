@@ -12,6 +12,13 @@
 // repository: Fig's generators are executable TypeScript, and running spec
 // code safely is a subsystem of its own.
 
+// A name is a string, or a list of aliases when the upstream signature gives
+// one: ["-q", "--quiet"] is a single option you can write two ways. Both are
+// real things to type, so both are offered.
+function namesOf(node) {
+  return Array.isArray(node.name) ? node.name : [node.name];
+}
+
 function matches(name, prefix) {
   return prefix === '' || name.startsWith(prefix);
 }
@@ -22,7 +29,7 @@ function matches(name, prefix) {
 function walk(schema, words) {
   let node = schema;
   for (const word of words.slice(1)) {
-    const next = node.subcommands?.find((s) => s.name === word);
+    const next = node.subcommands?.find((s) => namesOf(s).includes(word));
     if (!next) return null;
     node = next;
   }
@@ -33,30 +40,34 @@ export function schemaCandidates(schema, words, prefix) {
   const node = walk(schema, words);
   if (!node) return [];
 
-  const option = (o) => ({
-    value: o.name,
-    description: o.description ?? '',
-    source: 'schema'
-  });
+  const expand = (nodes) =>
+    (nodes ?? []).flatMap((n) =>
+      namesOf(n)
+        .filter((name) => matches(name, prefix))
+        .map((name) => ({
+          value: name,
+          description: n.description ?? '',
+          source: 'schema'
+        }))
+    );
 
   // A prefix that opens with a dash is asking for flags, so offering
   // subcommands alongside them would only be noise.
-  if (prefix.startsWith('-')) {
-    return (node.options ?? []).filter((o) => matches(o.name, prefix)).map(option);
-  }
+  if (prefix.startsWith('-')) return expand(node.options);
 
-  const subcommands = (node.subcommands ?? [])
-    .filter((s) => matches(s.name, prefix))
-    .map((s) => ({
-      value: s.name,
-      description: s.description ?? '',
-      source: 'schema'
-    }));
+  const subcommands = expand(node.subcommands);
+
+  // Values the node accepts outright, listed in the schema rather than looked
+  // up anywhere: `for … in`, a flag's allowed words. Nothing else can supply
+  // them, because they are not produced by any generator — they are simply what
+  // the command takes.
+  const suggested = expand(node.args?.suggestions);
 
   // The marker carries no value of its own: it tells the caller which
   // generator to resolve for this node, and is dropped once it has.
   const generator = node.args?.generator;
+  const all = [...subcommands, ...suggested];
   return generator
-    ? [...subcommands, { value: '', description: '', source: 'schema', generator }]
-    : subcommands;
+    ? [...all, { value: '', description: '', source: 'schema', generator }]
+    : all;
 }

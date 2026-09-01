@@ -1,0 +1,1 @@
+{"name":"kill","description":"Terminate or signal a process","options":[{"name":"-s","description":"A symbolic signal name specifying the signal to be sent"},{"name":"-l","description":"If no operand is given, list the signal names; otherwise, write the signal name…"}]}

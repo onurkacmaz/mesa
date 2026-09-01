@@ -1,0 +1,1 @@
+{"name":"mknod","description":"Create device special file","options":[{"name":"-F","description":"Format"}],"subcommands":[{"name":"c","description":"Create (c)haracter device"},{"name":"b","description":"Create (b)lock device"}]}

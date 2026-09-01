@@ -1,0 +1,1 @@
+{"name":"readlink","description":"Display file status","options":[{"name":"-f","description":"Display information using the specified format; similar to printf(3) formats in…"},{"name":"-n","description":"Do not force a newline to appear at the end of each piece of output"}],"args":{"generator":"files"}}

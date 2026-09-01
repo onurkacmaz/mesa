@@ -1,0 +1,1 @@
+{"name":"unzip","description":"Extract compressed files in a ZIP archive","options":[{"name":"-l","description":"List the contents of a zip file without extracting"},{"name":"-c"},{"name":"-d"}],"args":{"generator":"files"}}

@@ -1,8 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import fs from 'node:fs';
+
 import { schemaCandidates } from '../src/schema.mjs';
-import { SCHEMAS } from '../src/schemas/index.mjs';
+
+// The schemas as they actually ship, read from disk the way the app reads
+// them. Imported as a set rather than a bundled module because there are ~500
+// of them and the app never loads more than the few a session touches.
+const SCHEMA_DIR = new URL('../electron/command-schemas/', import.meta.url);
+const load = (name) => JSON.parse(fs.readFileSync(new URL(`${name}.json`, SCHEMA_DIR), 'utf8'));
+const shipped = fs
+  .readdirSync(SCHEMA_DIR)
+  .filter((f) => f.endsWith('.json'))
+  .map((f) => f.slice(0, -5));
 
 const git = {
   name: 'git',
@@ -81,21 +92,54 @@ test('a word that is in no schema node ends the walk', () => {
   assert.deepEqual(schemaCandidates(git, ['git', 'nonsense'], ''), []);
 });
 
-test('every shipped schema is walkable and names its command', () => {
-  for (const [name, schema] of Object.entries(SCHEMAS)) {
-    assert.equal(schema.name, name);
-    assert.doesNotThrow(() => schemaCandidates(schema, [name], ''));
-  }
+test('a great many schemas ship, and every one is named after its command', () => {
+  assert.ok(shipped.length > 400, `only ${shipped.length} schemas shipped`);
+  for (const name of shipped) assert.equal(load(name).name, name);
 });
 
 test('the shipped git schema knows checkout takes branches', () => {
-  const list = schemaCandidates(SCHEMAS.git, ['git', 'checkout'], '');
+  const list = schemaCandidates(load('git'), ['git', 'checkout'], '');
   assert.ok(list.some((c) => c.generator === 'git-branches'));
 });
 
 test('the shipped npm schema knows run takes script names', () => {
-  const list = schemaCandidates(SCHEMAS.npm, ['npm', 'run'], '');
+  const list = schemaCandidates(load('npm'), ['npm', 'run'], '');
   assert.ok(list.some((c) => c.generator === 'npm-scripts'));
+});
+
+// hub.json calls itself `git`, and writing the output by the name inside the
+// file let that thin wrapper spec land on top of the real one -- git lost its
+// branch completion entirely. The file name is what the command is called.
+test('a wrapper spec has not overwritten the command it wraps', () => {
+  const git = load('git');
+  assert.ok(git.subcommands.length > 30, `git has only ${git.subcommands.length} subcommands`);
+  assert.ok(git.subcommands.some((s) => s.name === 'checkout'));
+});
+
+// The whole safety argument, checked rather than asserted: the upstream format
+// carries JavaScript in generators, script, postProcess, generateSpec and
+// loadSpec, meant to be evaluated by the host. None of it may survive the
+// import, so the set of keys that DOES survive is pinned here.
+test('nothing executable survives into a shipped schema', () => {
+  const allowed = new Set([
+    'name',
+    'description',
+    'subcommands',
+    'options',
+    'args',
+    'generator',
+    // Static values the command accepts, listed in the spec. Data, not code.
+    'suggestions'
+  ]);
+  const seen = new Set();
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach(walk);
+    for (const k of Object.keys(n)) seen.add(k);
+    Object.values(n).forEach(walk);
+  };
+  for (const name of shipped) walk(load(name));
+  for (const key of seen) assert.ok(allowed.has(key), `unexpected key in shipped schema: ${key}`);
 });
 
 // Every generator a schema names has to exist in the main process table, or
@@ -116,7 +160,7 @@ test('every generator named by a shipped schema is one the app can resolve', () 
     if (node.args?.generator) named.add(node.args.generator);
     for (const sub of node.subcommands ?? []) walk(sub);
   };
-  for (const schema of Object.values(SCHEMAS)) walk(schema);
+  for (const name of shipped) walk(load(name));
   assert.ok(named.size > 0);
   for (const generator of named) assert.ok(KNOWN.has(generator), `unknown generator: ${generator}`);
 });

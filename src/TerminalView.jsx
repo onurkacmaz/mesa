@@ -9,7 +9,6 @@ import { OSC_ST, hexToOscRgb, oscPaletteColor, parseOscColor, terminalThemeName 
 import { parseZleOsc } from './zleBuffer.mjs';
 import { completionContext } from './commandLine.mjs';
 import { schemaCandidates } from './schema.mjs';
-import { SCHEMAS } from './schemas/index.mjs';
 import { rankCandidates } from './rank.mjs';
 import { acceptSequence, acceptedLine } from './acceptCandidate.mjs';
 import { getPaneCwd } from './paneCwd.js';
@@ -163,7 +162,14 @@ export default function TerminalView({
     }
 
     (async () => {
-      const schema = SCHEMAS[context.words[0]];
+      // Read from disk on the other side the first time this command is typed.
+      // Nearly 500 schemas ship and they come to five and a half megabytes;
+      // bundling them here would carry all of it into memory at launch for the
+      // one or two commands a session actually uses.
+      const schema = context.words[0]
+        ? await window.terminalApi.commandSchema(context.words[0]).catch(() => null)
+        : null;
+      if (generation !== lineGenerationRef.current) return;
       const fromSchema = schema
         ? schemaCandidates(schema, context.words, context.prefix)
         : [];

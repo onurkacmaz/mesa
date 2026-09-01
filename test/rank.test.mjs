@@ -17,9 +17,9 @@ test('what does not match at all is dropped', () => {
   assert.deepEqual(values(list), ['git status']);
 });
 
-test('an exact prefix beats a match in the middle', () => {
+test('only what starts with the prefix is offered', () => {
   const list = rankCandidates([c('ungit'), c('git status')], 'git');
-  assert.deepEqual(values(list), ['git status', 'ungit']);
+  assert.deepEqual(values(list), ['git status']);
 });
 
 // Typing lowercase and getting the capitalised thing is the common case, so
@@ -29,14 +29,21 @@ test('case is honoured but not required', () => {
   assert.deepEqual(values(list).slice(0, 2), ['makefile', 'Makefile']);
 });
 
-// The whole point of a fuzzy match: `gco` should find `git checkout`.
-test('scattered letters match, below the solid prefixes', () => {
-  const list = rankCandidates([c('git checkout'), c('grep -c out')], 'gco');
-  assert.deepEqual(values(list), ['git checkout', 'grep -c out']);
+// Scattered letters are NOT a match. `npm` matching
+// `claude-work --resume Session 412e...` -- an n, a p and an m in that order,
+// and nothing else in common -- is what a subsequence match actually produces
+// on a real history, and it is why there is no longer one. Warp's inline
+// history menu makes the same call.
+test('scattered letters do not match', () => {
+  assert.deepEqual(rankCandidates([c('git checkout')], 'gco'), []);
+  assert.deepEqual(
+    rankCandidates([c('claude-work --resume Session 412e0e48')], 'npm'),
+    []
+  );
 });
 
-test('letters in the wrong order do not match', () => {
-  assert.deepEqual(rankCandidates([c('git checkout')], 'ogc'), []);
+test('a match in the middle of a command is not a match either', () => {
+  assert.deepEqual(rankCandidates([c('sudo npm install')], 'npm'), []);
 });
 
 test('an empty prefix keeps everything, in source order', () => {
@@ -70,14 +77,46 @@ test('the same command from two sources is listed once, at its best rank', () =>
   assert.equal(list[0].source, 'schema');
 });
 
-// Recency is what makes history feel like it is reading your mind: the same
-// two commands, and the one you ran last is on top.
-test('among history entries the more recent one wins', () => {
+test('among otherwise equal history entries the more recent one wins', () => {
   const list = rankCandidates(
     [c('git push', 'history', { recency: 1 }), c('git pull', 'history', { recency: 9 })],
     'git p'
   );
   assert.deepEqual(values(list), ['git pull', 'git push']);
+});
+
+// The failure this was written for: on a real history `npm run dev` had been
+// run 61 times and the typo `npm ryb dev` once, an hour apart -- and ordering
+// on recency alone put the typo first.
+test('a command run many times beats a typo run once', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [
+      c('npm ryb dev', 'history', { count: 1, at: now - 60, recency: 99 }),
+      c('npm run dev', 'history', { count: 61, at: now - 4000, recency: 10 })
+    ],
+    'npm',
+    8,
+    now
+  );
+  assert.deepEqual(values(list), ['npm run dev', 'npm ryb dev']);
+});
+
+// But frequency must not win outright, or `clear` -- run 86 times -- would sit
+// at the top of everything beginning with c forever.
+test('something used constantly but not for a month yields to today', () => {
+  const now = 1_700_000_000;
+  const MONTH = 30 * 24 * 3600;
+  const list = rankCandidates(
+    [
+      c('clear', 'history', { count: 86, at: now - MONTH, recency: 5 }),
+      c('cargo build', 'history', { count: 3, at: now - 600, recency: 40 })
+    ],
+    'c',
+    8,
+    now
+  );
+  assert.deepEqual(values(list), ['cargo build', 'clear']);
 });
 
 test('the list is capped', () => {
