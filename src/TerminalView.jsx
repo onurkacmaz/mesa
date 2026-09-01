@@ -11,7 +11,7 @@ import { completionContext } from './commandLine.mjs';
 import { schemaCandidates } from './schema.mjs';
 import { SCHEMAS } from './schemas/index.mjs';
 import { rankCandidates } from './rank.mjs';
-import { acceptSequence } from './acceptCandidate.mjs';
+import { acceptSequence, acceptedLine } from './acceptCandidate.mjs';
 import { getPaneCwd } from './paneCwd.js';
 import CompletionList from './CompletionList.jsx';
 
@@ -68,6 +68,9 @@ export default function TerminalView({
   // Which request is the current one. Bumped on every reported line, so an
   // answer that arrives late can tell that it is answering an old question.
   const lineGenerationRef = useRef(0);
+  // The line a candidate was just accepted onto. The shell reports that line
+  // straight back, and without this it is indistinguishable from typing.
+  const acceptedRef = useRef(null);
 
   // What the completion list is currently offering, and the same value in a
   // ref: the key handler is attached once at mount and would otherwise close
@@ -87,15 +90,18 @@ export default function TerminalView({
   const acceptCompletion = useCallback((open, index) => {
     const item = open?.items[index];
     if (!item) return;
-    window.terminalApi.input(
-      tabId,
-      acceptSequence({
-        buffer: open.line.buffer,
-        cursor: open.line.cursor,
-        start: open.context.start,
-        value: item.value
-      })
-    );
+    const write = {
+      buffer: open.line.buffer,
+      cursor: open.line.cursor,
+      start: open.context.start,
+      value: item.value
+    };
+    // Remembered before the write, because the shell echoes the new line back
+    // through the same hook the user's typing comes through. Without this the
+    // echo opens a fresh list under the word just chosen, and accepting looks
+    // like it did nothing.
+    acceptedRef.current = acceptedLine(write);
+    window.terminalApi.input(tabId, acceptSequence(write));
     setCompletion(null);
   }, [tabId]);
 
@@ -109,8 +115,36 @@ export default function TerminalView({
       setCompletion(null);
       return;
     }
-    const context = completionContext(line.buffer, line.cursor);
+    // The echo of a candidate just accepted, not a keystroke. Cleared as it is
+    // consumed, so the very next real edit to that same line opens a list
+    // again.
+    // Every report invalidates whatever is still in flight, this one included.
+    // Clearing the list without bumping the generation was not enough: writing
+    // the accepted line makes the shell redraw an empty buffer first, and that
+    // report's candidates landed after the close and put the list straight
+    // back up.
     const generation = (lineGenerationRef.current += 1);
+
+    // The echo of a candidate just accepted, not a keystroke. Cleared as it is
+    // consumed, so the very next real edit to that same line opens a list
+    // again.
+    if (line.buffer === acceptedRef.current) {
+      acceptedRef.current = null;
+      setCompletion(null);
+      return;
+    }
+
+    const context = completionContext(line.buffer, line.cursor);
+
+    // Nothing typed yet at a bare prompt. There is a candidate for every
+    // executable on PATH at that moment, and eight arbitrary ones under the
+    // cursor is noise, not help — the list should arrive because you started
+    // saying something. An empty prefix with words before it is different and
+    // does open: `git ` genuinely means "what can follow git".
+    if (context.position === 'command' && context.prefix === '') {
+      setCompletion(null);
+      return;
+    }
 
     (async () => {
       const schema = SCHEMAS[context.words[0]];

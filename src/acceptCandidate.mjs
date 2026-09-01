@@ -19,6 +19,17 @@ const CLEAR_LINE = '\x05\x15';
 // submitting, so a multi-line history entry is reproduced intact.
 const SOFT_NEWLINE = '\x1b\r';
 
+// The line as it will read once the candidate is on it.
+//
+// The caller needs this as well as the keystrokes, because the shell reports
+// the new line straight back through the ZLE hook — and without something to
+// compare against, that report looks exactly like the user typing and opens a
+// fresh list under the word just chosen. Accepting would then appear to do
+// nothing at all.
+export function acceptedLine({ buffer, cursor, start, value }) {
+  return `${buffer.slice(0, start)}${value}${buffer.slice(cursor)}`;
+}
+
 export function acceptSequence({ buffer, cursor, start, value }) {
   const before = buffer.slice(0, start);
   // Everything from the cursor onward belongs to the line and is kept. The
