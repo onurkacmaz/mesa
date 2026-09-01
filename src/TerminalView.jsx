@@ -13,6 +13,7 @@ import { SCHEMAS } from './schemas/index.mjs';
 import { rankCandidates } from './rank.mjs';
 import { acceptSequence, acceptedLine } from './acceptCandidate.mjs';
 import { getPaneCwd } from './paneCwd.js';
+import { dropdownPlacement } from './dropdownPlacement.mjs';
 import CompletionList from './CompletionList.jsx';
 
 // One live session: an xterm instance bound to one pty. Every open tab keeps
@@ -82,6 +83,9 @@ export default function TerminalView({
   const [completion, setCompletion] = useState(null);
   const completionRef = useRef(null);
   completionRef.current = completion;
+  // Which way the list opened. The arrows move the selection by what the user
+  // SEES, so up has to mean up on screen whichever direction the list took.
+  const upwardRef = useRef(false);
 
   const draggingRef = useRef(false);
   const tuiRef = useRef(false);
@@ -339,7 +343,12 @@ export default function TerminalView({
       if (open && !event.metaKey && !event.altKey && !event.ctrlKey) {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
-          const step = event.key === 'ArrowDown' ? 1 : -1;
+          // With the list drawn upward the best match is at the BOTTOM, so
+          // moving up the screen means moving down the ranking. Stepping by
+          // rank regardless would send the highlight the opposite way from the
+          // key, which reads as the list being broken.
+          const down = event.key === 'ArrowDown';
+          const step = (down ? 1 : -1) * (upwardRef.current ? -1 : 1);
           const count = open.items.length;
           setCompletion((c) =>
             c ? { ...c, selected: (c.selected + step + count) % count } : c
@@ -886,6 +895,18 @@ export default function TerminalView({
   }, [focused]);
 
   const term = termRef.current;
+  // Worked out here as well as inside the list, so the key handler can read it
+  // from a ref: the arrows move the highlight by what the user SEES, and which
+  // way that is depends on which way the list opened.
+  if (completion && term) {
+    upwardRef.current =
+      dropdownPlacement({
+        cursorRow: term.buffer.active.cursorY,
+        termRows: term.rows,
+        count: completion.items.length
+      }).direction === 'up';
+  }
+
   // Drawn as a SIBLING of the host element, never a child: xterm owns that
   // element's children and React must not reconcile against them. Both are
   // absolutely positioned in the same pane, so the list still lands in the
@@ -906,6 +927,8 @@ export default function TerminalView({
           termRows={term.rows}
           cellWidth={term._core._renderService.dimensions.css.cell.width}
           cellHeight={term._core._renderService.dimensions.css.cell.height}
+          screenLeft={hostRef.current?.querySelector('.xterm-screen')?.offsetLeft ?? 0}
+          screenTop={hostRef.current?.querySelector('.xterm-screen')?.offsetTop ?? 0}
           onPick={(i) => acceptCompletion(completion, i)}
         />
       ) : null}
