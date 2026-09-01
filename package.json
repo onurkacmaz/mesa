@@ -1,6 +1,6 @@
 {
   "name": "mesa",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Terminals on an infinite canvas",
   "author": "Onur Ka\u00e7maz <kacmaz.onur@hotmail.com>",
