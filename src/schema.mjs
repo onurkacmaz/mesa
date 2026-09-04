@@ -40,28 +40,34 @@ export function schemaCandidates(schema, words, prefix) {
   const node = walk(schema, words);
   if (!node) return [];
 
-  const expand = (nodes) =>
-    (nodes ?? []).flatMap((n) =>
-      namesOf(n)
+  // Options are offered under every alias they have, subcommands only under
+  // the first. `-q` and `--quiet` are both things people type, so both belong
+  // in the list; `npm r` is an alias for `run` that nobody reaches for, and
+  // offering it put a single letter above the word it abbreviates. Fig's
+  // format puts the canonical name first, which is the one to keep.
+  const expand = (nodes, aliases) =>
+    (nodes ?? []).flatMap((n) => {
+      const names = aliases ? namesOf(n) : namesOf(n).slice(0, 1);
+      return names
         .filter((name) => matches(name, prefix))
         .map((name) => ({
           value: name,
           description: n.description ?? '',
           source: 'schema'
-        }))
-    );
+        }));
+    });
 
   // A prefix that opens with a dash is asking for flags, so offering
   // subcommands alongside them would only be noise.
-  if (prefix.startsWith('-')) return expand(node.options);
+  if (prefix.startsWith('-')) return expand(node.options, true);
 
-  const subcommands = expand(node.subcommands);
+  const subcommands = expand(node.subcommands, false);
 
   // Values the node accepts outright, listed in the schema rather than looked
   // up anywhere: `for … in`, a flag's allowed words. Nothing else can supply
   // them, because they are not produced by any generator — they are simply what
   // the command takes.
-  const suggested = expand(node.args?.suggestions);
+  const suggested = expand(node.args?.suggestions, false);
 
   // The marker carries no value of its own: it tells the caller which
   // generator to resolve for this node, and is dropped once it has.

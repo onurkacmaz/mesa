@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { rankCandidates } from '../src/rank.mjs';
+import { rankCandidates, weighByUsage } from '../src/rank.mjs';
 
 const c = (value, source = 'history', extra = {}) => ({
   value,
@@ -136,4 +136,77 @@ test('an empty candidate is never offered', () => {
   assert.deepEqual(rankCandidates([c(''), c('git')], 'g'), [
     { value: 'git', description: '', source: 'history' }
   ]);
+});
+
+// ── What a schema entry is worth ────────────────────────────────────────────
+//
+// A schema has no quality signal of its own: every subcommand matches equally,
+// so they came out in the order the JSON file listed them and `git ` opened
+// with archive, blame, commit, config. The history is what knows which of them
+// you actually use.
+
+const schema = (value) => ({ value, description: '', source: 'schema' });
+const past = (value, count, freshness) => ({ value, source: 'history', count, freshness });
+
+test('a schema entry inherits the runs of the commands that start with it', () => {
+  const [merge] = weighByUsage(
+    [schema('merge')],
+    [past('git merge main', 4, 0.9), past('git merge dev', 2, 0.5)],
+    'git '
+  );
+  assert.equal(merge.count, 6);
+  assert.equal(merge.freshness, 0.9, 'takes the freshest of them');
+});
+
+// `npm r` starts every `npm run …` there is, so the alias `r` was credited
+// with all 70 runs of `run` and came out above the word it abbreviates.
+test('it counts whole words, not prefixes of them', () => {
+  const [r] = weighByUsage([schema('r')], [past('npm run dev', 70, 1)], 'npm ');
+  assert.equal(r.count, undefined, '`r` did not earn `run`s history');
+  const [run] = weighByUsage([schema('run')], [past('npm run dev', 70, 1)], 'npm ');
+  assert.equal(run.count, 70);
+});
+
+test('an exact past command counts, with nothing after it', () => {
+  const [status] = weighByUsage([schema('status')], [past('git status', 9, 1)], 'git ');
+  assert.equal(status.count, 9);
+});
+
+test('an entry nothing has ever run is left alone', () => {
+  const [archive] = weighByUsage([schema('archive')], [past('git merge main', 4, 1)], 'git ');
+  assert.deepEqual(archive, schema('archive'));
+});
+
+test('history entries pass through untouched', () => {
+  const entry = past('git merge main', 4, 1);
+  const [out] = weighByUsage([entry], [entry], 'git ');
+  assert.equal(out, entry);
+});
+
+// The whole point: what you use beats what you have never touched, whichever
+// list it came from.
+test('a used schema entry outranks an unused one, and both stay in the list', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    weighByUsage(
+      [schema('archive'), schema('merge')],
+      [past('git merge main', 6, 1)],
+      'git '
+    ),
+    { word: '', line: 'git ' },
+    8,
+    now
+  );
+  assert.deepEqual(values(list), ['merge', 'archive']);
+});
+
+test('a command you actually run outranks a schema entry you never have', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [...weighByUsage([schema('archive')], [], 'git '), past('git merge main', 6, 1)],
+    { word: '', line: 'git ' },
+    8,
+    now
+  );
+  assert.deepEqual(values(list), ['git merge main', 'archive']);
 });

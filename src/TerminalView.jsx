@@ -9,7 +9,7 @@ import { OSC_ST, hexToOscRgb, oscPaletteColor, parseOscColor, terminalThemeName 
 import { parseZleOsc } from './zleBuffer.mjs';
 import { completionContext } from './commandLine.mjs';
 import { schemaCandidates } from './schema.mjs';
-import { rankCandidates } from './rank.mjs';
+import { rankCandidates, weighByUsage } from './rank.mjs';
 import { acceptSequence, acceptedLine } from './acceptCandidate.mjs';
 import { getPaneCwd } from './paneCwd.js';
 import { dropdownPlacement } from './dropdownPlacement.mjs';
@@ -207,7 +207,17 @@ export default function TerminalView({
       // one. Only the most recent request may write.
       if (generation !== lineGenerationRef.current) return;
 
-      const items = rankCandidates([...fromSchema, ...live], {
+      // The schema knows what a command CAN do; the history knows what you
+      // actually do with it. Crediting each schema entry with the past runs
+      // that start with it is what turns `git ` from the JSON file's own order
+      // — archive, blame, config — into the handful you really use.
+      // Up to where the WORD starts, not up to the cursor. Handing it the whole
+      // line made `git c` look for past runs of `git ccheckout`, so a
+      // subcommand stopped being credited the moment you typed its first
+      // letter — exactly when the list matters most.
+      const beforeWord = line.buffer.slice(0, context.start);
+      const weighted = weighByUsage(fromSchema, live, beforeWord);
+      const items = rankCandidates([...weighted, ...live], {
         word: context.prefix,
         line: lineSoFar
       });
@@ -337,10 +347,12 @@ export default function TerminalView({
 
       // The completion list claims four keys, and only while it is open.
       //
-      // Tab is deliberately not among them, open or closed. zsh users lean on
-      // compsys and their own plugins, and Mesa does not own the line the way
-      // Warp does — shadowing the shell's own completion would be a regression
-      // for exactly the people most likely to notice.
+      // TAB accepts. It is the key a terminal has always used for completion,
+      // so reaching for anything else to take a completion is a small daily
+      // friction — and Enter is then left doing what Enter does, which is run
+      // the line. With the list CLOSED, Tab is untouched and goes straight to
+      // the shell, so compsys and whatever else is bound to it keep working
+      // wherever Mesa has nothing of its own to offer.
       //
       // The arrows are claimed only while the list is open, because with it
       // closed Up is history recall and taking that would break something
@@ -361,7 +373,7 @@ export default function TerminalView({
           );
           return false;
         }
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (event.key === 'Tab' && !event.shiftKey) {
           event.preventDefault();
           acceptCompletion(open, open.selected);
           return false;

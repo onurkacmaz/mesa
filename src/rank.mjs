@@ -69,6 +69,10 @@ function recencyBoost({ at, freshness }, now) {
 }
 
 export function frecency(candidate, now) {
+  // Never run, as far as anything here knows: a schema entry no past command
+  // matched. It still belongs in the list — that is how you find a flag you
+  // have not used — but below everything with real use behind it.
+  if (!candidate.count) return 0;
   // Diminishing returns, deliberately. A raw count grows without limit, and
   // then nothing can outrank it: `clear`, run 86 times but not for a month,
   // still beat a command used three times this morning, because 86 × the
@@ -93,6 +97,40 @@ function prefixesFrom(prefix) {
   return typeof prefix === 'string' ? { word: prefix, line: prefix } : prefix;
 }
 
+// What a schema entry is worth, learned from what you have actually run.
+//
+// Without this a schema has no quality signal at all: every subcommand matches
+// equally, so they came out in the order the JSON file happened to list them —
+// `git ` opened with `archive`, `blame`, `commit`, `config`. Nobody's most-used
+// git command is `archive`. The schema knows what git CAN do and has no idea
+// what YOU do, and the history knows exactly.
+//
+// So each schema entry is credited with the runs of every past command that
+// starts with it: `merge` at `git ` inherits every `git merge …` you have run.
+// It then carries a count and a freshness like any history entry and is ranked
+// beside them on the same scale, instead of ahead of them by category.
+export function weighByUsage(candidates, history, linePrefix) {
+  return candidates.map((candidate) => {
+    if (candidate.source !== 'schema' || !candidate.value) return candidate;
+    const start = `${linePrefix}${candidate.value}`;
+    let count = 0;
+    let freshness;
+    for (const entry of history) {
+      if (entry.source !== 'history' || !entry.value.startsWith(start)) continue;
+      // The whole word, not a prefix of one. `npm r` starts every `npm run …`
+      // there is, so the alias `r` was credited with all 70 runs of `run` and
+      // came out above it; `merge` would likewise have swallowed `mergetool`.
+      const after = entry.value[start.length];
+      if (after !== undefined && after !== ' ') continue;
+      count += entry.count ?? 1;
+      if (freshness === undefined || (entry.freshness ?? 0) > freshness) {
+        freshness = entry.freshness;
+      }
+    }
+    return count ? { ...candidate, count, freshness } : candidate;
+  });
+}
+
 export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() / 1000) {
   const { word, line } = prefixesFrom(prefix);
   const scored = [];
@@ -112,10 +150,14 @@ export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() /
 
   scored.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
+    // How much the thing is USED comes before what kind of thing it is. Source
+    // used to win outright, which meant a schema entry nobody has ever run —
+    // and the schema is mostly those — buried every command the user actually
+    // types. It settles ties now instead of deciding the order.
+    if (a.weight !== b.weight) return b.weight - a.weight;
     const sourceDelta =
       (SOURCE_RANK[a.candidate.source] ?? 9) - (SOURCE_RANK[b.candidate.source] ?? 9);
     if (sourceDelta !== 0) return sourceDelta;
-    if (a.weight !== b.weight) return b.weight - a.weight;
     // Nothing to choose between them but which was seen last.
     return (b.candidate.recency ?? 0) - (a.candidate.recency ?? 0);
   });
