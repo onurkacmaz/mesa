@@ -126,9 +126,46 @@ test('the list is capped', () => {
   assert.equal(rankCandidates(many, 'git', 3).length, 3);
 });
 
-test('a candidate identical to what is typed is not offered', () => {
+// A WORD completed to itself is a no-op. A whole command is not the same
+// thing: `ls` is the most-run entry in a real history by a long way, and
+// dropping it for being exactly what was typed left the list showing only its
+// flag variants, as though the plain command were not an option.
+test('a word completed to itself is not offered', () => {
+  const list = rankCandidates(
+    [c('checkout', 'schema'), c('checkout-index', 'schema')],
+    { word: 'checkout', line: 'git checkout' }
+  );
+  assert.deepEqual(values(list), ['checkout-index']);
+});
+
+test('the command you already typed is still offered, being a command', () => {
   const list = rankCandidates([c('git status'), c('git stash')], 'git status');
-  assert.deepEqual(values(list), []);
+  assert.deepEqual(values(list), ['git status']);
+});
+
+// Three ways of running one command, not three commands.
+test('flag variants are one family', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [run('ls', 47), run('ls -l', 5), run('ls -a', 3), run('ls -la', 2), run('cat file', 9)],
+    'ls',
+    8,
+    now
+  );
+  const lsRows = values(list).filter((v) => v.startsWith('ls'));
+  assert.equal(lsRows.length, 2, `expected two ls rows, got ${JSON.stringify(lsRows)}`);
+  assert.equal(lsRows[0], 'ls', 'the plain command leads');
+});
+
+test('a real argument is not a flag variant', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [run('docker compose down', 9), run('docker compose up -d', 8)],
+    'docker compose',
+    8,
+    now
+  );
+  assert.equal(values(list).length, 2, 'down and up are two commands, not one');
 });
 
 // The generator marker from schema.mjs carries no value and must never be
@@ -305,4 +342,40 @@ test('a schema entry is never dropped as a typo of a command', () => {
     now
   );
   assert.ok(values(list).includes('stash'));
+});
+
+// `ls` shares its first two letters with lsvfs, lsmp, lsbom, lsappinfo and
+// lsm. Five rows of binaries nobody has ever run is not discovery.
+test('never-run executables get a couple of rows, not the alphabet', () => {
+  const now = 1_700_000_000;
+  const onPath = (value) => ({ value, description: '', source: 'path' });
+  const list = rankCandidates(
+    [
+      run('ls', 47),
+      onPath('lsvfs'),
+      onPath('lsmp'),
+      onPath('lsbom'),
+      onPath('lsappinfo'),
+      onPath('lsm')
+    ],
+    'ls',
+    8,
+    now
+  );
+  assert.equal(values(list).filter((v) => v.startsWith('ls') && v !== 'ls').length, 2);
+  assert.ok(values(list).includes('ls'));
+});
+
+// A schema entry is a subcommand of the command being typed, which is the
+// opposite of an unrelated binary that happens to share some letters.
+test('schema entries are not capped like unrelated binaries', () => {
+  const now = 1_700_000_000;
+  const sub = (value) => ({ value, description: '', source: 'schema' });
+  const list = rankCandidates(
+    [sub('commit'), sub('cp'), sub('create'), sub('config'), sub('container')],
+    { word: 'c', line: 'docker c' },
+    8,
+    now
+  );
+  assert.equal(list.length, 5);
 });

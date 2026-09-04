@@ -143,6 +143,13 @@ export function weighByUsage(candidates, history, linePrefix) {
 
 const words = (value) => value.split(/\s+/).filter(Boolean);
 
+// The words that say what a command DOES, with the flags taken out. `ls -l`,
+// `ls -a` and `ls -la` all reduce to `ls`, which is the point: they are one
+// command run three ways, not three commands, and the leading-words rule could
+// never see that — `-l` and `-a` are different words, so it read them as
+// different ideas and gave each of them a row.
+const withoutFlags = (value) => words(value).filter((w) => !w.startsWith('-'));
+
 // How many leading words two commands agree on.
 function sharedWords(a, b) {
   const x = words(a);
@@ -185,6 +192,14 @@ function withinEdits(a, b, max) {
 const familyDepth = (typedWords) => Math.max(2, typedWords + 1);
 const MAX_PER_FAMILY = 2;
 
+// How many never-run executables may take a row. PATH is offered so a command
+// you have not used yet is still findable, but `ls` shares its first two
+// letters with lsvfs, lsmp, lsbom, lsappinfo and lsm, and five rows of
+// binaries nobody has ever run is not discovery, it is the alphabet. A schema
+// entry gets no such cap: those are the subcommands of the command actually
+// being typed, which is the opposite of unrelated.
+const MAX_UNUSED_PATH = 2;
+
 // What a typo, a stray trailing slash and an abandoned half-typed line all
 // look like: run once, and a character or two away from something run often.
 const NEAR_DUPLICATE_EDITS = 2;
@@ -213,11 +228,20 @@ export function admit(sorted, typedWords, limit) {
       }
     }
 
+    if (!reject && source === 'path' && !count) {
+      const unused = out.filter((k) => k.source === 'path' && !k.count).length;
+      if (unused >= MAX_UNUSED_PATH) reject = true;
+    }
+
     if (!reject) {
       const depth = familyDepth(typedWords);
+      const bare = withoutFlags(value).join(' ');
       let family = 0;
       for (const kept of out) {
-        if (sharedWords(value, kept.value) >= depth) family += 1;
+        const sameStem = sharedWords(value, kept.value) >= depth;
+        // Or the same command entirely, once its flags are set aside.
+        const sameCommand = bare !== '' && bare === withoutFlags(kept.value).join(' ');
+        if (sameStem || sameCommand) family += 1;
       }
       if (family >= MAX_PER_FAMILY) reject = true;
     }
@@ -235,9 +259,13 @@ export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() /
   const scored = [];
   for (const candidate of candidates) {
     const against = candidate.source === 'history' ? line : word;
-    // A generator marker carries no value, and a candidate identical to what
-    // is already typed would accept to a no-op.
-    if (!candidate.value || candidate.value === against) continue;
+    if (!candidate.value) continue; // a generator marker carries no value
+    // A word completed to itself is a no-op and not worth a row. A whole
+    // command is different: `ls` is the most-run thing in this history by a
+    // long way, and dropping it for being exactly what was typed left the list
+    // showing only its flag variants — as though the plain command were not an
+    // option.
+    if (candidate.value === against && candidate.source !== 'history') continue;
     const score = matchScore(candidate.value, against);
     if (score === null) continue;
     scored.push({
