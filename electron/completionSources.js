@@ -42,16 +42,66 @@ async function cached(key, produce) {
   return value;
 }
 
+// Directories that are almost never what you meant to type. They are usually
+// the largest things in a project and they sort to the top of a plain readdir,
+// so `ls ` opened with node_modules/ and dist/ ahead of the files actually
+// being worked on. Still offered — you sometimes do mean them — but with no
+// recency behind them, which puts them last.
+const NOISE = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'release',
+  'target',
+  'vendor',
+  'coverage',
+  '__pycache__',
+  '.next',
+  'Pods'
+]);
+
+// How many entries are worth stat-ing for their modification time. A home
+// directory or a monorepo root can hold thousands, and the list shows eight.
+const STAT_LIMIT = 400;
+
 async function entries(cwd, directoriesOnly) {
   const found = await fs.readdir(cwd, { withFileTypes: true });
-  return found
+  const wanted = found
     .filter((e) => !e.name.startsWith('.'))
     .filter((e) => (directoriesOnly ? e.isDirectory() : true))
-    .map((e) => ({
-      value: e.isDirectory() ? `${e.name}/` : e.name,
-      description: '',
-      source: 'file'
-    }));
+    .slice(0, STAT_LIMIT);
+
+  // Modification time, which is the only quality signal a directory listing
+  // has. Without it every file weighed the same and they came out in whatever
+  // order the filesystem returned them — so `ls ` offered node_modules/ and
+  // release/ before the file being edited, and any past command outranked all
+  // of them. What you touched an hour ago is what you are about to name.
+  return Promise.all(
+    wanted.map(async (e) => {
+      // count 0 for the noise, which the ranking reads as "no use behind this"
+      // and puts last. Leaving the timestamp off instead was not enough and
+      // did the opposite: an entry with no recency at all falls through to the
+      // neutral multiplier, which is HIGHER than the penalty a genuinely old
+      // file gets — so node_modules/ and dist/ came out above the file being
+      // worked on rather than below it.
+      if (NOISE.has(e.name)) {
+        return { value: `${e.name}/`, description: '', source: 'file', count: 0 };
+      }
+      let at;
+      try {
+        at = Math.floor((await fs.stat(path.join(cwd, e.name))).mtimeMs / 1000);
+      } catch {
+        at = undefined; // vanished between the readdir and the stat
+      }
+      return {
+        value: e.isDirectory() ? `${e.name}/` : e.name,
+        description: '',
+        source: 'file',
+        count: 1,
+        at
+      };
+    })
+  );
 }
 
 async function gitBranches(cwd) {

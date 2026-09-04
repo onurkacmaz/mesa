@@ -158,6 +158,14 @@ export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() /
     const sourceDelta =
       (SOURCE_RANK[a.candidate.source] ?? 9) - (SOURCE_RANK[b.candidate.source] ?? 9);
     if (sourceDelta !== 0) return sourceDelta;
+    // The actual timestamp, once the buckets have run out of things to say.
+    // Those buckets are coarse on purpose — they have to compare a file with a
+    // command — but everything in one working directory tends to fall inside
+    // the same week, so every file in `ls ` scored identically and they came
+    // out in whatever order the filesystem returned them. Newest first is what
+    // a directory listing is actually asked for.
+    const atDelta = (b.candidate.at ?? 0) - (a.candidate.at ?? 0);
+    if (atDelta !== 0) return atDelta;
     // Nothing to choose between them but which was seen last.
     return (b.candidate.recency ?? 0) - (a.candidate.recency ?? 0);
   });
