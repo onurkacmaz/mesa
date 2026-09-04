@@ -87,7 +87,8 @@ test('among otherwise equal history entries the more recent one wins', () => {
 
 // The failure this was written for: on a real history `npm run dev` had been
 // run 61 times and the typo `npm ryb dev` once, an hour apart -- and ordering
-// on recency alone put the typo first.
+// on recency alone put the typo first. It is not merely ranked below it now,
+// it is gone: two edits from something run 61 times is a typo, not a choice.
 test('a command run many times beats a typo run once', () => {
   const now = 1_700_000_000;
   const list = rankCandidates(
@@ -99,7 +100,7 @@ test('a command run many times beats a typo run once', () => {
     8,
     now
   );
-  assert.deepEqual(values(list), ['npm run dev', 'npm ryb dev']);
+  assert.deepEqual(values(list), ['npm run dev']);
 });
 
 // But frequency must not win outright, or `clear` -- run 86 times -- would sit
@@ -209,4 +210,99 @@ test('a command you actually run outranks a schema entry you never have', () => 
     now
   );
   assert.deepEqual(values(list), ['git merge main', 'archive']);
+});
+
+// ── Eight rows should be eight different ideas ──────────────────────────────
+//
+// The list was spending its slots on variations of one thing. Typing `claude`
+// filled five of eight rows with `claude-work --resume <a session id you will
+// never retype>`, and `docker c` gave three rows of
+// `docker compose --profile …`. Ranking cannot fix that on its own: every one
+// of those really is a command you ran, so they all rank alike and crowd out
+// everything else.
+
+const run = (value, count, extra = {}) => ({
+  value,
+  description: '',
+  source: 'history',
+  count,
+  freshness: 0.9,
+  ...extra
+});
+
+test('a family of variations gets two rows, not the whole list', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [
+      run('claude-work --resume aaaa', 1),
+      run('claude-work --resume bbbb', 1),
+      run('claude-work --resume cccc', 1),
+      run('claude-work --resume dddd', 1),
+      run('claude-work stop aaaa', 1),
+      run('claude-work attach aaaa', 1)
+    ],
+    'claude',
+    8,
+    now
+  );
+  const resumes = values(list).filter((v) => v.startsWith('claude-work --resume'));
+  assert.equal(resumes.length, 2, 'only two of the four resumes');
+  assert.ok(values(list).includes('claude-work stop aaaa'), 'the freed slot went to a different idea');
+  assert.ok(values(list).includes('claude-work attach aaaa'));
+});
+
+test('commands that differ early are not one family', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [run('docker compose down', 9), run('docker compose up -d', 8), run('docker ps -a', 7)],
+    'docker ',
+    8,
+    now
+  );
+  assert.deepEqual(values(list), ['docker compose down', 'docker compose up -d', 'docker ps -a']);
+});
+
+// A typo, a stray trailing slash and an abandoned half-typed line all look the
+// same: run once, and a character or two away from something you run often.
+test('a one-off a couple of edits from a popular command is dropped', () => {
+  const now = 1_700_000_000;
+  const dropped = (typo, real) => {
+    const list = rankCandidates([run(real, 20), run(typo, 1)], real.slice(0, 3), 8, now);
+    return !values(list).includes(typo);
+  };
+  assert.ok(dropped('docker compoe up', 'docker compose up'), 'typo');
+  assert.ok(dropped('cd Projects/sh', 'cd Projects sh') || dropped('cd Projects sh', 'cd Projects/sh'), 'slash for space');
+  assert.ok(dropped('cd Projects/app/', 'cd Projects/app'), 'stray trailing slash');
+  assert.ok(dropped('npm ryb dev', 'npm run dev'), 'two edits');
+});
+
+test('a command you actually run often is never mistaken for a typo of another', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates([run('git push', 30), run('git pull', 25)], 'git p', 8, now);
+  assert.deepEqual(values(list), ['git push', 'git pull']);
+});
+
+test('something far from everything else survives', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates([run('npm run dev', 40), run('npm publish', 1)], 'npm', 8, now);
+  assert.ok(values(list).includes('npm publish'));
+});
+
+// The rules free slots; they must never leave the list emptier than it needs
+// to be.
+test('the list still fills up when there are candidates to fill it with', () => {
+  const now = 1_700_000_000;
+  const many = Array.from({ length: 20 }, (_, i) => run(`cmd${i} arg`, 5));
+  assert.equal(rankCandidates(many, 'cmd', 8, now).length, 8);
+});
+
+test('a schema entry is never dropped as a typo of a command', () => {
+  const now = 1_700_000_000;
+  const list = rankCandidates(
+    [run('git stash save', 20), { value: 'stash', description: '', source: 'schema' }],
+    { word: 'st', line: 'git st' },
+    8,
+    now
+  );
+  assert.ok(values(list).includes('stash'));
 });

@@ -131,6 +131,105 @@ export function weighByUsage(candidates, history, linePrefix) {
   });
 }
 
+// ── Eight rows, eight different ideas ──────────────────────────────────────
+//
+// Ranking alone cannot make a list useful, because it answers the wrong
+// question. It puts the best candidate first, and then the second-best is
+// usually a variation of the first: typing `claude` filled five of eight rows
+// with `claude-work --resume <a session id you will never retype>`, and
+// `docker c` gave three rows of `docker compose --profile …`. Every one of
+// those really is a command you ran, so they rank alike and crowd out
+// everything else. A list is worth its space when the rows are ALTERNATIVES.
+
+const words = (value) => value.split(/\s+/).filter(Boolean);
+
+// How many leading words two commands agree on.
+function sharedWords(a, b) {
+  const x = words(a);
+  const y = words(b);
+  let n = 0;
+  while (n < x.length && n < y.length && x[n] === y[n]) n += 1;
+  return n;
+}
+
+// Levenshtein, but it only ever needs to answer "within `max`?" — so it gives
+// up as soon as every cell in a row is already past the limit.
+function withinEdits(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return false;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+      if (current[j] < best) best = current[j];
+    }
+    if (best > max) return false;
+    previous = current;
+  }
+  return previous[b.length] <= max;
+}
+
+// How deep two commands must agree before they count as the same idea.
+//
+// Two leading words is the floor, and it has to rise with what has been typed
+// or a long line collapses into nothing: at `docker exec ` every command
+// already agrees on two words by definition, so a fixed two would have read
+// every container you have ever run as the same idea. One word past what is
+// typed, never less than two.
+//
+// Measured against a real history, this is what separates `docker compose
+// down` and `docker compose up -d` — two ideas, they part company at the third
+// word — from the three `docker compose --profile …` variants, which are one.
+const familyDepth = (typedWords) => Math.max(2, typedWords + 1);
+const MAX_PER_FAMILY = 2;
+
+// What a typo, a stray trailing slash and an abandoned half-typed line all
+// look like: run once, and a character or two away from something run often.
+const NEAR_DUPLICATE_EDITS = 2;
+const RUN_OFTEN_ENOUGH = 3;
+
+export function admit(sorted, typedWords, limit) {
+  const out = [];
+  const passed = [];
+  for (const candidate of sorted) {
+    const { value, source, count } = candidate;
+    let reject = false;
+
+    for (const seen of passed) {
+      // Everything already passed ranked higher, which for a history entry
+      // means it is used more. Only history is judged this way: a schema entry
+      // is a fact about the command, not something anyone typed.
+      if (
+        source === 'history' &&
+        seen.source === 'history' &&
+        (count ?? 1) <= 1 &&
+        (seen.count ?? 1) >= RUN_OFTEN_ENOUGH &&
+        withinEdits(value, seen.value, NEAR_DUPLICATE_EDITS)
+      ) {
+        reject = true;
+        break;
+      }
+    }
+
+    if (!reject) {
+      const depth = familyDepth(typedWords);
+      let family = 0;
+      for (const kept of out) {
+        if (sharedWords(value, kept.value) >= depth) family += 1;
+      }
+      if (family >= MAX_PER_FAMILY) reject = true;
+    }
+
+    passed.push(candidate);
+    if (reject) continue;
+    out.push(candidate);
+    if (out.length === limit) break;
+  }
+  return out;
+}
+
 export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() / 1000) {
   const { word, line } = prefixesFrom(prefix);
   const scored = [];
@@ -174,12 +273,20 @@ export function rankCandidates(candidates, prefix, limit = 8, now = Date.now() /
   // schema entry and something you have run. Sorted order means the first one
   // seen is already the best-ranked, so the rest are simply dropped.
   const seen = new Set();
-  const out = [];
+  const unique = [];
   for (const { candidate } of scored) {
     if (seen.has(candidate.value)) continue;
     seen.add(candidate.value);
-    out.push(candidate);
-    if (out.length === limit) break;
+    unique.push(candidate);
   }
-  return out;
+
+  // Cut to `limit` only after the rows have been made to differ from each
+  // other. Cutting first would hand the whole list to one family.
+  //
+  // The word under the cursor is only half typed unless a space follows it, so
+  // it does not count as agreed-upon yet. Counting it did: at `claude` the
+  // family depth came out one too deep and every `claude-work --resume …` was
+  // read as its own idea, which is the whole thing being fixed.
+  const complete = words(line).length - (line.endsWith(' ') || line === '' ? 0 : 1);
+  return admit(unique, Math.max(0, complete), limit);
 }
