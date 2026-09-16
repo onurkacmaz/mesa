@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, TouchBar } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const os = require('node:os');
@@ -521,6 +521,94 @@ function killTerminal(term) {
   }, 400);
 }
 
+// The Touch Bar lists the active workflow's panes; tapping one reveals it on
+// the canvas, the same trip the dock takes. The renderer decides everything
+// about the list — which panes, in what order, under what names — and this
+// side only draws it and reports taps back by id.
+//
+// One scrubber per window, created on first use and then only fed new items:
+// rebuilding the whole TouchBar on every title change makes the strip flicker
+// and throws away how far it had been scrolled.
+const TOUCH_BAR_MAX_ITEMS = 64;
+const TOUCH_BAR_MAX_LABEL = 80;
+const touchBars = new WeakMap();
+
+function touchBarFor(win) {
+  let entry = touchBars.get(win);
+  if (entry) return entry;
+  entry = { ids: [], shown: false };
+  entry.scrubber = new TouchBar.TouchBarScrubber({
+    items: [],
+    mode: 'free',
+    continuous: false,
+    showArrowButtons: false,
+    // Nothing is left highlighted: the focused pane is marked in its picture,
+    // and a native highlight would only ever show the last tap, which goes
+    // stale the moment the selection is changed on the canvas.
+    selectedStyle: 'none',
+    overlayStyle: 'none',
+    select: (index) => {
+      const id = entry.ids[index];
+      if (id && !win.isDestroyed()) win.webContents.send('touchbar:reveal', id);
+      // NSScrubber does not report a tap on the item it already considers
+      // selected, so the selection is cleared by reloading the same items —
+      // otherwise the second tap on one pane would do nothing. Deferred so the
+      // reload does not happen inside the scrubber's own delegate call.
+      setImmediate(() => {
+        if (!win.isDestroyed()) entry.scrubber.items = entry.scrubber.items;
+      });
+    }
+  });
+  entry.bar = new TouchBar({ items: [entry.scrubber] });
+  touchBars.set(win, entry);
+  return entry;
+}
+
+// Each item is painted in the renderer (src/touchBarArt.js) at the bar's 2x
+// density. Only a PNG data URL of a sane size is accepted, and it is decoded as
+// a 2x representation so its size in points is what the scrubber lays out by.
+const TOUCH_BAR_MAX_IMAGE = 256 * 1024;
+const TOUCH_BAR_PNG = 'data:image/png;base64,';
+
+function touchBarImage(dataURL) {
+  if (typeof dataURL !== 'string' || !dataURL.startsWith(TOUCH_BAR_PNG)) return null;
+  if (dataURL.length > TOUCH_BAR_MAX_IMAGE) return null;
+  const image = nativeImage.createEmpty();
+  image.addRepresentation({ scaleFactor: 2, dataURL });
+  return image.isEmpty() ? null : image;
+}
+
+function setTouchBarPanes(win, raw) {
+  if (process.platform !== 'darwin' || !win || win.isDestroyed()) return;
+  const items = (Array.isArray(raw) ? raw : [])
+    .filter((item) => typeof item?.id === 'string' && typeof item?.label === 'string')
+    .slice(0, TOUCH_BAR_MAX_ITEMS);
+  const entry = touchBarFor(win);
+  clearTimeout(entry.pendingClear);
+  if (items.length === 0) {
+    // No panes: give the bar back to the system rather than show an empty strip.
+    // Put off briefly, because switching workflows sends the outgoing one's
+    // empty list right before the incoming one's panes — tearing the bar down
+    // in between would blink it on every switch. Two IPC messages are two
+    // tasks, so one tick is not enough to be sure the second has landed.
+    entry.pendingClear = setTimeout(() => {
+      if (entry.shown && !win.isDestroyed()) win.setTouchBar(null);
+      entry.shown = false;
+      entry.ids = [];
+    }, 50);
+    return;
+  }
+  entry.ids = items.map((item) => item.id);
+  entry.scrubber.items = items.map((item) => {
+    const image = touchBarImage(item.image);
+    if (image) return { icon: image };
+    // A picture that did not survive the trip still leaves the pane findable.
+    return { label: item.label.slice(0, TOUCH_BAR_MAX_LABEL) };
+  });
+  if (!entry.shown) win.setTouchBar(entry.bar);
+  entry.shown = true;
+}
+
 // On macOS BrowserWindow's `icon` option is ignored, and an unpackaged run
 // shows the generic Electron icon in the Dock. A packaged app takes its icon
 // from its own bundle; this is only for `npm run dev`.
@@ -708,6 +796,10 @@ app.whenReady().then(() => {
   ipcMain.handle('editor:choose', (event) =>
     chooseApplication(BrowserWindow.fromWebContents(event.sender))
   );
+
+  ipcMain.on('touchbar:panes', (event, items) => {
+    setTouchBarPanes(BrowserWindow.fromWebContents(event.sender), items);
+  });
 
   ipcMain.on('terminal:close', (event, { id }) => {
     const term = terminals.get(id);

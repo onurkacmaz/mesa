@@ -8,6 +8,9 @@ import { getPaneGeom } from './paneGeometry.js';
 import { getPaneCwd, setPaneCwd } from './paneCwd.js';
 import { getPaneUrl, setPaneUrl } from './paneUrls.js';
 import { isPaneRunning } from './paneRunning.js';
+import { getPaneTitle, onPaneTitleChange } from './paneTitles.js';
+import { plainLabel, touchBarItems } from './touchBar.mjs';
+import { drawTouchBarItem } from './touchBarArt.js';
 import { registerWorkspaceActions, unregisterWorkspaceActions } from './workspaceActions.js';
 import { SELECTION_COLOR } from './theme.js';
 import { Shortcut } from './shortcuts.jsx';
@@ -1480,6 +1483,61 @@ export default function Workspace({
     },
     [commitView, cancelReveal, clearRevealTimers, selectPane]
   );
+
+  // The Touch Bar belongs to whichever workflow is active. Handing it back is a
+  // separate effect from filling it, keyed on `active` alone: folded into the
+  // one below, every selection change would clear the bar and refill it, and
+  // the strip would blink on each click. React runs every cleanup before any
+  // new effect, so on a switch the outgoing workflow's clear always lands
+  // before the incoming one's list.
+  //
+  // What was last put on the bar, so a strip that would come out identical is
+  // not sent: every update makes the scrubber reload, which can throw away how
+  // far it had been scrolled, and most title changes (a page reporting the
+  // same title twice, a branch cut to the same few letters) change nothing
+  // that is drawn. Forgotten on handing the bar back, so coming back to this
+  // workflow always refills it.
+  const touchBarSentRef = useRef(null);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    return () => {
+      touchBarSentRef.current = null;
+      window.terminalApi.setTouchBarPanes?.([]);
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const send = () => {
+      const items = touchBarItems(panes, selectedIds, getPaneTitle).map((item) => ({
+        id: item.id,
+        label: plainLabel(item),
+        image: drawTouchBarItem(item)
+      }));
+      const drawn = items.map((item) => `${item.id}\n${item.image}`).join('\n');
+      if (drawn === touchBarSentRef.current) return;
+      touchBarSentRef.current = drawn;
+      window.terminalApi.setTouchBarPanes?.(items);
+    };
+    send();
+    // Titles move on their own — a page loading, a branch changing — and a
+    // browser can report several in a row, so those are gathered into one send.
+    let timer = null;
+    const offTitles = onPaneTitleChange(() => {
+      clearTimeout(timer);
+      timer = setTimeout(send, 80);
+    });
+    return () => {
+      offTitles();
+      clearTimeout(timer);
+    };
+  }, [active, panes, selectedIds]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    return window.terminalApi.onTouchBarReveal?.(revealPane);
+  }, [active, revealPane]);
 
   const beginGroupDrag = useCallback((anchorId, anchorPos) => {
     const currentSelected = selectedIdsRef.current;

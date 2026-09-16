@@ -53,6 +53,15 @@ contextBridge.exposeInMainWorld('terminalApi', {
     ipcRenderer.on('guest:shortcut', listener);
     return () => ipcRenderer.removeListener('guest:shortcut', listener);
   },
+  // The active workflow's panes, already painted, for the Touch Bar to show.
+  // An empty list hands the bar back to the system.
+  setTouchBarPanes: (items) => ipcRenderer.send('touchbar:panes', items),
+  // A pane tapped on the Touch Bar, by id.
+  onTouchBarReveal: (callback) => {
+    const listener = (event, id) => callback(id);
+    ipcRenderer.on('touchbar:reveal', listener);
+    return () => ipcRenderer.removeListener('touchbar:reveal', listener);
+  },
   onFullScreenChange: (callback) => {
     const listener = (event, isFullScreen) => callback(isFullScreen);
     ipcRenderer.on('window:fullscreen', listener);
