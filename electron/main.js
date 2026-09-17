@@ -559,7 +559,6 @@ function touchBarFor(win) {
       });
     }
   });
-  entry.bar = new TouchBar({ items: [entry.scrubber] });
   touchBars.set(win, entry);
   return entry;
 }
@@ -605,7 +604,13 @@ function setTouchBarPanes(win, raw) {
     // A picture that did not survive the trip still leaves the pane findable.
     return { label: item.label.slice(0, TOUCH_BAR_MAX_LABEL) };
   });
-  if (!entry.shown) win.setTouchBar(entry.bar);
+  // A TouchBar is built fresh each time the bar is taken back, never reused.
+  // Electron wires an item's changes to its TouchBar only in that TouchBar's
+  // constructor, and setTouchBar(null) unwires them for good, so a bar handed
+  // back and set again shows the items it had at that moment and then ignores
+  // every later update until the app restarts. The scrubber itself carries
+  // over; only the wrapper is new.
+  if (!entry.shown) win.setTouchBar(new TouchBar({ items: [entry.scrubber] }));
   entry.shown = true;
 }
 
