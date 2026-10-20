@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, TouchBar } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, TouchBar } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const os = require('node:os');
@@ -23,6 +23,27 @@ const terminals = new Map();
 // Deliberately a short list. Everything not named here stays with the page,
 // because a guest is a real browser and ⌘C, ⌘V, ⌘F and ⌘0 belong to it.
 const GUEST_APP_KEYS = new Set(['w', 'n', 'b', 't', 'l']);
+
+// Google's sign-in refuses an embedded Chromium at the identifier step ("This
+// browser or app may not be secure"), even with the Electron tokens gone from
+// the User-Agent: the Sec-CH-UA client hints still list Chromium without the
+// "Google Chrome" brand, and that mismatch is what gives the guest away.
+// Firefox sends no client hints at all, so on the sign-in host alone the guest
+// becomes Firefox — the UA swapped, the hints dropped — which Google accepts.
+// Everywhere else the guest keeps its Chrome UA.
+const GOOGLE_SIGNIN = /^https:\/\/accounts\.google\.com\//i;
+const FIREFOX_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0';
+
+function disguiseGoogleSignIn(ses) {
+  ses.webRequest.onBeforeSendHeaders({ urls: ['https://accounts.google.com/*'] }, (details, callback) => {
+    const headers = details.requestHeaders;
+    headers['User-Agent'] = FIREFOX_UA;
+    for (const name of Object.keys(headers)) {
+      if (/^sec-ch-ua/i.test(name)) delete headers[name];
+    }
+    callback({ requestHeaders: headers });
+  });
+}
 
 // Where the last session is kept. userData rather than the renderer's own
 // storage: a layout someone spent a morning arranging should not be thrown
@@ -259,6 +280,21 @@ function createWindow() {
         altKey: input.alt,
         shiftKey: input.shift
       });
+    });
+
+    // The headers alone are not enough: the sign-in page also reads
+    // navigator.userAgent. The guest's own UA (the one the renderer gave it)
+    // is set aside while it is on the sign-in host and handed back after.
+    let pageUA = null;
+    guest.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
+      if (!isMainFrame || isInPlace) return;
+      if (GOOGLE_SIGNIN.test(url)) {
+        if (pageUA === null) pageUA = guest.getUserAgent();
+        guest.setUserAgent(FIREFOX_UA);
+      } else if (pageUA !== null) {
+        guest.setUserAgent(pageUA);
+        pageUA = null;
+      }
     });
 
     guest.setWindowOpenHandler(({ url }) => {
@@ -671,6 +707,7 @@ function gitBranchAt(dir) {
 app.whenReady().then(() => {
   setDevDockIcon();
   buildApplicationMenu();
+  disguiseGoogleSignIn(session.defaultSession);
   const win = createWindow();
 
   ipcMain.handle('terminal:create', (event, { id, cols, rows, cwd }) => {
