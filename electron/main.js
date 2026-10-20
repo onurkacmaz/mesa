@@ -347,8 +347,9 @@ function buildApplicationMenu() {
       { role: 'editMenu' },
       {
         label: 'View',
+        // No Reload: its Cmd+R accelerator reloaded the whole window, and with
+        // it every terminal, from one stray keystroke.
         submenu: [
-          { role: 'reload' },
           { role: 'toggleDevTools' },
           { type: 'separator' },
           { role: 'togglefullscreen' }
