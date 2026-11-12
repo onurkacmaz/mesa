@@ -1,0 +1,14 @@
+[package]
+name = "mesa"
+version = "2.0.0"
+edition = "2024"
+description = "Terminals on an infinite canvas"
+license = "MIT"
+
+[dependencies]
+gpui = "0.2.2"
+gpui_platform = { version = "0.1.0", features = ["font-kit"] }
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
