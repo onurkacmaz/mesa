@@ -23,6 +23,7 @@ use alacritty_terminal::{
 };
 use gpui::{
     fill, linear_color_stop, linear_gradient, outline, point, px, size, App, Bounds, DispatchPhase, Element,
+    ElementInputHandler, Focusable,
     ElementId, Entity, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     ScrollWheelEvent, SharedString, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window,
@@ -284,6 +285,10 @@ impl Element for TerminalElement {
         let font_px = FONT_SIZE * zoom;
 
         self.register_mouse(layout, window);
+        // The platform's text input reaches the terminal through this, for
+        // as long as the terminal holds the keyboard.
+        let focus = self.view.read(cx).focus_handle(cx);
+        window.handle_input(&focus, ElementInputHandler::new(bounds, self.view.clone()), cx);
 
         let shared = self.session.shared.lock();
         let term = &shared.term;
@@ -293,6 +298,7 @@ impl Element for TerminalElement {
 
         window.paint_quad(fill(bounds, default_bg));
 
+        let mut cursor_at = None;
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
             let cell_rect = |row: usize, col: usize, cols: f32| {
                 Bounds::new(
@@ -514,6 +520,7 @@ impl Element for TerminalElement {
                 let row = cursor.point.line.0 + display_offset;
                 if row >= 0 {
                     let rect = cell_rect(row as usize, cursor.point.column.0, 1.0);
+                    cursor_at = Some(rect);
                     let accent = theme.accent;
                     match (cursor.shape, self.focused) {
                         (CursorShape::Hidden, _) => {}
@@ -557,6 +564,10 @@ impl Element for TerminalElement {
             }
             let _ = default_fg;
         });
+        drop(shared);
+        if self.view.read(cx).cursor_bounds != cursor_at {
+            self.view.update(cx, |v, _| v.cursor_bounds = cursor_at);
+        }
     }
 }
 

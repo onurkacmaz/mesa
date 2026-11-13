@@ -32,6 +32,35 @@ fn mac_line_editing(k: &Keystroke) -> Option<&'static str> {
     }
 }
 
+/// Whether a keystroke is plain text, to be left to the platform's own text
+/// input rather than translated here.
+///
+/// The character a keystroke carries is worked out from the key alone, and
+/// on a Mac that leaves Caps Lock out — with it on, `a` still arrived as
+/// "a". Dead keys (a `^` waiting for its vowel) and input methods are lost
+/// the same way. The platform's text system gets all of these right, so a
+/// key that only types is handed to it, and it comes back through the
+/// terminal's input handler as the text it actually produced.
+///
+/// Named keys stay here (Return must send CR, not the LF the platform
+/// reports), and so does anything held with ⌃ or ⌘. Off a Mac, ⌥ is Meta
+/// and is translated here too.
+pub fn is_text(k: &Keystroke) -> bool {
+    let m = &k.modifiers;
+    if m.control || m.platform || m.function || (m.alt && !cfg!(target_os = "macos")) {
+        return false;
+    }
+    if mac_line_editing(k).is_some() {
+        return false;
+    }
+    let named = matches!(
+        k.key.as_str(),
+        "enter" | "tab" | "escape" | "backspace" | "delete" | "insert" | "up" | "down" | "left" | "right" | "home"
+            | "end" | "pageup" | "pagedown"
+    ) || (k.key.len() > 1 && k.key.starts_with('f') && k.key[1..].chars().all(|c| c.is_ascii_digit()));
+    !named && k.key_char.as_deref().is_some_and(|c| !c.is_empty() && !c.chars().any(|c| c.is_control()))
+}
+
 /// The xterm modifier parameter: 1 + shift + 2·alt + 4·ctrl.
 fn modifier_code(k: &Keystroke) -> u8 {
     let m = &k.modifiers;
@@ -165,6 +194,30 @@ mod tests {
         assert_eq!(to_bytes(&ks("f1"), TermMode::NONE).as_deref(), Some("\x1bOP"));
         assert_eq!(to_bytes(&ks("f5"), TermMode::NONE).as_deref(), Some("\x1b[15~"));
         assert_eq!(to_bytes(&ks("ctrl-up"), TermMode::NONE).as_deref(), Some("\x1b[1;5A"));
+    }
+
+    #[test]
+    fn plain_typing_is_left_to_the_platform() {
+        // As the platform reports them: the key, and the character it types.
+        let typed = |spec: &str, ch: &str| {
+            let mut k = ks(spec);
+            k.key_char = Some(ch.to_string());
+            k
+        };
+        assert!(is_text(&typed("a", "a")));
+        assert!(is_text(&typed("shift-a", "A")));
+        assert!(is_text(&typed("space", " ")));
+        assert!(!is_text(&typed("enter", "\n")));
+        assert!(!is_text(&typed("shift-enter", "\n")));
+        assert!(!is_text(&ks("a")));
+        assert!(!is_text(&ks("enter")));
+        assert!(!is_text(&ks("shift-enter")));
+        assert!(!is_text(&ks("tab")));
+        assert!(!is_text(&ks("backspace")));
+        assert!(!is_text(&ks("up")));
+        assert!(!is_text(&ks("ctrl-c")));
+        assert!(!is_text(&ks("cmd-w")));
+        assert!(!is_text(&ks("f5")));
     }
 
     #[test]

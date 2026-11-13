@@ -10,8 +10,10 @@ use std::{
 };
 
 use alacritty_terminal::{grid::Dimensions, term::TermMode, vte::ansi};
+use std::ops::Range;
+
 use gpui::{
-    actions, div, prelude::*, px, App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, KeyBinding,
+    actions, div, prelude::*, px, App, Bounds, EntityInputHandler, Pixels, UTF16Selection, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, KeyBinding,
     KeyDownEvent, MouseButton, SharedString, Task, Window,
 };
 use parking_lot::RwLock;
@@ -101,6 +103,11 @@ pub struct TerminalView {
     last_line: String,
     cwd_ticket: u64,
     pub selecting: bool,
+    /// An input method's composition, not yet committed.
+    marked: Option<String>,
+    /// Where the cursor cell was last painted, for the input method's
+    /// candidate window.
+    pub cursor_bounds: Option<Bounds<Pixels>>,
     pub scroll_remainder: f32,
     pub zoom: f32,
     pub visible: bool,
@@ -166,6 +173,8 @@ impl TerminalView {
             last_line: String::new(),
             cwd_ticket: 0,
             selecting: false,
+            marked: None,
+            cursor_bounds: None,
             scroll_remainder: 0.0,
             zoom: 1.0,
             visible: true,
@@ -425,21 +434,32 @@ impl TerminalView {
             }
         }
 
+        // Plain typing is left unhandled, so the platform's text system
+        // turns it into text (Caps Lock, dead keys, input methods) and hands
+        // it to the input handler below — see `keys::is_text`.
+        if keys::is_text(k) {
+            return;
+        }
+
         let mode = *session.shared.lock().term.mode();
         if let Some(bytes) = keys::to_bytes(k, mode) {
             cx.stop_propagation();
-            // Typing returns the view to the prompt and clears a selection,
-            // as every terminal does.
-            {
-                let mut shared = session.shared.lock();
-                shared.term.selection = None;
-                if shared.term.grid().display_offset() != 0 {
-                    shared.term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
-                }
-            }
-            session.write_str(&bytes);
-            cx.notify();
+            self.type_bytes(&session, &bytes, cx);
         }
+    }
+
+    /// Typing returns the view to the prompt and clears a selection, as
+    /// every terminal does.
+    fn type_bytes(&mut self, session: &Session, bytes: &str, cx: &mut Context<Self>) {
+        {
+            let mut shared = session.shared.lock();
+            shared.term.selection = None;
+            if shared.term.grid().display_offset() != 0 {
+                shared.term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+            }
+        }
+        session.write_str(bytes);
+        cx.notify();
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -593,6 +613,62 @@ fn rank_for(context: &LineContext, line: &ZleLine, cwd: Option<&str>) -> Vec<Can
     let mut all = weigh_by_usage(&from_schema, &live, &before_word);
     all.extend(live);
     rank_candidates(&all, Prefix::new(&context.prefix, &line_so_far), 8, unix_now())
+}
+
+/// The terminal as a text-input client. It holds no text of its own — the
+/// line belongs to the shell — so it only takes what the platform has
+/// composed and types it into the pty. A composition in progress (an input
+/// method's candidate, a dead key's accent) is held as marked text until it
+/// is committed, and its position is the cursor's, so the candidate window
+/// opens at the prompt.
+impl EntityInputHandler for TerminalView {
+    fn text_for_range(&mut self, _: Range<usize>, _: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
+        None
+    }
+
+    fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
+        let at = self.marked.as_ref().map(|m| m.encode_utf16().count()).unwrap_or(0);
+        Some(UTF16Selection { range: at..at, reversed: false })
+    }
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        self.marked.as_ref().map(|m| 0..m.encode_utf16().count())
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
+        self.marked = None;
+    }
+
+    fn replace_text_in_range(&mut self, _: Option<Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
+        self.marked = None;
+        let Some(session) = self.session.clone() else { return };
+        // Control characters never arrive here as text: a newline the
+        // platform inserts is Return, which is translated in on_key_down.
+        let text: String = text.chars().filter(|c| !c.is_control()).collect();
+        if !text.is_empty() {
+            self.type_bytes(&session, &text, cx);
+        }
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        text: &str,
+        _: Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.marked = (!text.is_empty()).then(|| text.to_string());
+        cx.notify();
+    }
+
+    fn bounds_for_range(&mut self, _: Range<usize>, _: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
+        self.cursor_bounds
+    }
+
+    fn character_index_for_point(&mut self, _: gpui::Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        None
+    }
 }
 
 impl Focusable for TerminalView {
