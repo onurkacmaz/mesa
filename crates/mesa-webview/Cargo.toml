@@ -1,0 +1,15 @@
+[package]
+name = "mesa-webview"
+description = "A browser pane's page: a native webview parented to Mesa's window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+raw-window-handle = "0.6"
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wry = { version = "0.57", default-features = false, features = ["os-webview", "devtools"] }

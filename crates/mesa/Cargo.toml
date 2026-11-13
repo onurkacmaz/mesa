@@ -1,0 +1,38 @@
+[package]
+name = "mesa"
+description = "Terminals on an infinite canvas"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+default-run = "mesa"
+
+[dependencies]
+mesa-core = { path = "../mesa-core" }
+mesa-webview = { path = "../mesa-webview" }
+gpui = "0.2.2"
+alacritty_terminal = "0.26"
+portable-pty = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+dirs = "6"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+parking_lot = "0.12"
+smol = "2"
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
+percent-encoding = "2"
+anyhow = "1"
+
+# `cargo bundle --release -p mesa` (https://github.com/burtonageo/cargo-bundle)
+# turns the binary into Mesa.app; scripts/dist-macos.sh wraps that in a DMG.
+[package.metadata.bundle]
+name = "Mesa"
+identifier = "com.onurkacmaz.mesa"
+icon = ["../../build/icon.icns", "../../build/icon.png"]
+category = "public.app-category.developer-tools"
+short_description = "Terminals on an infinite canvas"
+osx_minimum_system_version = "11.0"
