@@ -25,7 +25,7 @@ once.
 Mesa is written in Rust, with [GPUI](https://www.gpui.rs) — Zed's GPU-accelerated
 UI framework — for everything on screen. You need a stable Rust toolchain
 (`rustup`) and, on a Mac, the Xcode command line tools
-(`xcode-select --install`).
+(`xcode-select --install`) — a full Xcode is not needed.
 
 ```sh
 git clone https://github.com/onurkacmaz/mesa.git

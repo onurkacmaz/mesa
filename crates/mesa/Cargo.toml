@@ -10,7 +10,11 @@ default-run = "mesa"
 [dependencies]
 mesa-core = { path = "../mesa-core" }
 mesa-webview = { path = "../mesa-webview" }
-gpui = "0.2.2"
+# runtime_shaders: on a Mac the Metal shaders are compiled when the app starts
+# rather than at build time, so building needs only the Command Line Tools —
+# the ahead-of-time path runs `xcrun metal`, which only a full Xcode has. It
+# changes nothing on other platforms.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 alacritty_terminal = "0.26"
 portable-pty = "0.9"
 serde.workspace = true
