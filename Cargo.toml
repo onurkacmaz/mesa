@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/mesa-core", "crates/mesa", "crates/mesa-webview"]
+default-members = ["crates/mesa-core", "crates/mesa"]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+authors = ["Onur Kaçmaz <kacmaz.onur@hotmail.com>"]
+repository = "https://github.com/onurkacmaz/mesa"
+homepage = "https://github.com/onurkacmaz/mesa"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+
+# gpui is large and slow in debug; optimise dependencies even in dev builds so
+# a debug terminal can keep up with real output.
+[profile.dev.package."*"]
+opt-level = 2
+
+# gpui 0.2.2 reaches xattr 0.2.3 through its HTTP client, and that release
+# names libc::ENOATTR, which current libc no longer defines for Linux. The
+# vendored copy differs by that one constant (ENODATA, which it always was).
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }

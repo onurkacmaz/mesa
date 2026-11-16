@@ -28,7 +28,7 @@ body:
     attributes:
       label: Mesa version
       description: From the DMG you installed, or the commit if you built it yourself.
-      placeholder: "1.4.0"
+      placeholder: "2.0.0"
     validations:
       required: true
 
@@ -54,5 +54,5 @@ body:
     attributes:
       label: Anything else
       description: >
-        Screenshots help for anything visual. Errors from the devtools console
-        (View → Toggle Developer Tools) help for anything else.
+        Screenshots help for anything visual. For anything else, run Mesa from
+        a terminal with `RUST_LOG=mesa=debug` and paste what it printed.

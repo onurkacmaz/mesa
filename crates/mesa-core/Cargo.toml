@@ -1,0 +1,12 @@
+[package]
+name = "mesa-core"
+description = "The pure half of Mesa: what a session file is, how completions are ranked, how a shell's reports are read"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
