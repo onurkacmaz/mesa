@@ -119,29 +119,37 @@ fn falls_back_to_the_first_workflow_when_the_active_one_is_gone() {
 }
 
 #[test]
-fn keeps_a_browser_url_and_a_terminal_cwd_and_never_crosses_them() {
+fn a_saved_browser_pane_is_dropped_and_the_terminals_beside_it_stay() {
     let r = normalize_session(&session(json!({ "workflows": [{ "id": "wf-1", "name": "a", "panes": [
-        pane("term-1", json!({ "cwd": "/tmp", "url": "https://example.com" })),
-        pane("term-2", json!({ "kind": "browser", "title": "Browser 2", "cwd": "/tmp", "url": "https://example.com" }))
+        pane("term-1", json!({ "cwd": "/tmp" })),
+        pane("term-2", json!({ "kind": "browser", "title": "Browser 2", "url": "https://example.com" }))
     ]}]})))
     .unwrap();
-    let t = &r.workflows[0].panes[0].tabs[0];
-    let b = &r.workflows[0].panes[1].tabs[0];
-    assert_eq!(t.cwd.as_deref(), Some("/tmp"));
-    assert_eq!(t.url, None);
-    assert_eq!(b.url.as_deref(), Some("https://example.com"));
-    assert_eq!(b.cwd, None);
+    assert_eq!(ids(&r, 0), vec!["term-1"]);
+    assert_eq!(r.workflows[0].panes[0].tabs[0].cwd.as_deref(), Some("/tmp"));
 }
 
 #[test]
-fn a_browser_url_must_be_http() {
+fn a_pane_with_no_kind_or_an_unknown_one_is_a_terminal() {
+    let mut no_kind = pane("term-1", json!({ "cwd": "/one" }));
+    no_kind.as_object_mut().unwrap().remove("kind");
     let r = normalize_session(&session(json!({ "workflows": [{ "id": "wf-1", "name": "a", "panes": [
-        pane("term-1", json!({ "kind": "browser", "url": "file:///etc/passwd" })),
-        pane("term-2", json!({ "kind": "browser", "url": "HTTPS://Example.com" }))
+        no_kind,
+        pane("term-2", json!({ "kind": "spreadsheet", "cwd": "/two" }))
     ]}]})))
     .unwrap();
-    assert_eq!(r.workflows[0].panes[0].tabs[0].url, None);
-    assert_eq!(r.workflows[0].panes[1].tabs[0].url.as_deref(), Some("HTTPS://Example.com"));
+    assert_eq!(ids(&r, 0), vec!["term-1", "term-2"]);
+}
+
+#[test]
+fn a_terminal_ignores_a_stray_address() {
+    let r = normalize_session(&session(json!({ "workflows": [{ "id": "wf-1", "name": "a", "panes": [
+        pane("term-1", json!({ "cwd": "/tmp", "url": "https://example.com" }))
+    ]}]})))
+    .unwrap();
+    let written = serde_json::to_value(&r.workflows[0].panes[0].tabs[0]).unwrap();
+    assert_eq!(written.get("url"), None);
+    assert_eq!(written["cwd"], "/tmp");
 }
 
 #[test]
@@ -166,15 +174,6 @@ fn a_startup_command_survives_stripped_of_anything_that_could_run_it() {
             None
         ]
     );
-}
-
-#[test]
-fn a_browser_pane_carries_no_startup_command() {
-    let r = normalize_session(&session(json!({ "workflows": [{ "id": "wf-1", "name": "a", "panes": [
-        pane("term-1", json!({ "kind": "browser", "command": "npm run dev" }))
-    ]}]})))
-    .unwrap();
-    assert_eq!(r.workflows[0].panes[0].tabs[0].command, None);
 }
 
 #[test]
@@ -256,11 +255,11 @@ fn a_v1_session_becomes_a_v2_one() {
             title_locked: true,
             cwd: Some("/tmp".into()),
             command: Some("npm run dev".into()),
-            url: None
         }]
     );
     assert_eq!(terminal.active_tab_id, "term-3");
-    assert_eq!(r.workflows[0].panes[1].tabs[0].url.as_deref(), Some("https://example.com"));
+    // The v1 browser pane beside it is passed over, like every saved one.
+    assert_eq!(ids(&r, 0), vec!["term-3"]);
     assert_eq!(r.workflows[0].view, View { zoom: 0.5, pan: Pan { x: 10.0, y: 20.0 } });
 }
 

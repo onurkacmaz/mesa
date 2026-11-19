@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mesa-core", "crates/mesa", "crates/mesa-webview"]
-default-members = ["crates/mesa-core", "crates/mesa"]
+members = ["crates/mesa-core", "crates/mesa"]
 
 [workspace.package]
 version = "2.0.0"

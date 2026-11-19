@@ -16,7 +16,7 @@ use gpui::{
 use mesa_core::{
     flags::{normalize_flags, Flags, ThemeMode},
     rail_reorder::{clamp_offset, drop_index, gap_between, reorder, slide_for, Slot},
-    session::{counter_seeds_from, parse_session, PaneKind, Session, Workflow, SESSION_VERSION},
+    session::{counter_seeds_from, parse_session, Session, Workflow, SESSION_VERSION},
 };
 
 use super::{
@@ -35,7 +35,6 @@ actions!(
     mesa,
     [
         NewTerminal,
-        NewBrowser,
         NewWorkflow,
         CloseSelection,
         OpenInEditor,
@@ -44,7 +43,6 @@ actions!(
         ZoomOut,
         ZoomReset,
         ZoomFit,
-        FocusOmnibox,
         Quit,
         ToggleFullScreen,
         Minimize
@@ -70,11 +68,9 @@ pub fn bind_keys(cx: &mut App) {
     let m = if cfg!(target_os = "macos") { "cmd" } else { "ctrl-shift" };
     let mut bindings = vec![
         KeyBinding::new(&format!("{m}-n"), NewTerminal, None),
-        KeyBinding::new(&format!("{m}-b"), NewBrowser, None),
         KeyBinding::new(&format!("{m}-t"), NewWorkflow, None),
         KeyBinding::new(&format!("{m}-w"), CloseSelection, None),
         KeyBinding::new(&format!("{m}-e"), OpenInEditor, None),
-        KeyBinding::new(&format!("{m}-l"), FocusOmnibox, None),
         KeyBinding::new(&format!("{m}-="), ZoomIn, None),
         KeyBinding::new(&format!("{m}-+"), ZoomIn, None),
         KeyBinding::new(&format!("{m}--"), ZoomOut, None),
@@ -287,21 +283,13 @@ impl MesaApp {
         self.workflows.iter().find(|w| w.id == self.active).map(|w| w.workspace.clone())
     }
 
-    /// Tells every workspace whether it is the one in front, and what is
-    /// over it — a native page must never float over another workflow, the
-    /// onboarding, or a question.
+    /// Tells every workspace what is drawn over it: the empty-canvas hint
+    /// stands aside while the onboarding is up.
     fn sync_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let covered = self.onboarding.is_some() || self.pending_close.is_some() || self.renaming.is_some();
         let onboarding = self.onboarding.is_some();
         for w in &self.workflows {
-            let active = w.id == self.active;
             w.workspace.update(cx, |ws, cx| {
-                ws.active = active;
-                ws.covered = covered;
                 ws.hide_empty_hint = onboarding;
-                if !active {
-                    ws.hide_pages(cx);
-                }
                 cx.notify();
             });
         }
@@ -411,8 +399,7 @@ impl MesaApp {
             return; // never leave the window with nothing
         }
         let Some(index) = self.workflows.iter().position(|w| w.id == id) else { return };
-        let entry = self.workflows.remove(index);
-        entry.workspace.update(cx, |ws, cx| ws.hide_pages(cx));
+        self.workflows.remove(index);
         if self.active == id {
             self.active = self.workflows[index.saturating_sub(1).min(self.workflows.len() - 1)].id.clone();
         }
@@ -421,7 +408,7 @@ impl MesaApp {
     }
 
     /// The same rule the panes inside follow: the question is for work in
-    /// flight, and a workflow of idle prompts and pages closes on the spot.
+    /// flight, and a workflow of idle prompts closes on the spot.
     fn request_close_workflow(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let target = id.unwrap_or_else(|| self.active.clone());
         if self.workflows.len() <= 1 {
@@ -480,7 +467,7 @@ impl MesaApp {
             if let Some(ws) = this.active_workspace() {
                 window.focus(&ws.focus_handle(cx));
                 if matches!(e, OnboardingEvent::Finish) {
-                    ws.update(cx, |ws, cx| ws.add_pane(PaneKind::Terminal, window, cx));
+                    ws.update(cx, |ws, cx| ws.add_pane(window, cx));
                 }
             }
         });
@@ -765,10 +752,7 @@ impl MesaApp {
                     .h(px(30.))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(action("new-terminal", "Terminal").on_click(cx.listener(|this, _, window, cx| {
-                        this.with_workspace(cx, window, |ws, window, cx| ws.add_pane(PaneKind::Terminal, window, cx))
-                    })))
-                    .child(action("new-browser", "Browser").on_click(cx.listener(|this, _, window, cx| {
-                        this.with_workspace(cx, window, |ws, window, cx| ws.add_pane(PaneKind::Browser, window, cx))
+                        this.with_workspace(cx, window, |ws, window, cx| ws.add_pane(window, cx))
                     }))),
             )
             .child(div().flex_none().w(px(1.)).h(px(12.)).mb(px(9.)).bg(theme.border_soft))
@@ -819,8 +803,7 @@ impl Render for MesaApp {
             .key_context("Mesa")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.with_workspace(cx, window, |ws, w, cx| ws.add_pane(PaneKind::Terminal, w, cx))))
-            .on_action(cx.listener(|this, _: &NewBrowser, window, cx| this.with_workspace(cx, window, |ws, w, cx| ws.add_pane(PaneKind::Browser, w, cx))))
+            .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.with_workspace(cx, window, |ws, w, cx| ws.add_pane(w, cx))))
             .on_action(cx.listener(|this, _: &NewWorkflow, window, cx| {
                 if this.renaming.is_none() {
                     this.add_workflow(window, cx)
@@ -835,7 +818,6 @@ impl Render for MesaApp {
             .on_action(cx.listener(|this, _: &ZoomOut, window, cx| this.with_workspace(cx, window, |ws, _, cx| ws.zoom_out(cx))))
             .on_action(cx.listener(|this, _: &ZoomReset, window, cx| this.with_workspace(cx, window, |ws, _, cx| ws.zoom_reset(cx))))
             .on_action(cx.listener(|this, _: &ZoomFit, window, cx| this.with_workspace(cx, window, |ws, _, cx| ws.fit_to_content(cx))))
-            .on_action(cx.listener(|this, _: &FocusOmnibox, window, cx| this.with_workspace(cx, window, |ws, w, cx| ws.focus_omnibox(w, cx))))
             .on_action(cx.listener(|this, a: &SwitchTab, window, cx| {
                 let n = a.0;
                 this.with_workspace(cx, window, |ws, w, cx| ws.select_tab(n, w, cx))

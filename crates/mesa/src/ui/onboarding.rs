@@ -31,7 +31,7 @@ const STEPS: [Step; 4] = [
     Step {
         title: "Open one, put it where you want.",
         body: "New panes land on the canvas and are yours to arrange. Drag a pane by its title bar to move it, or take an edge to resize it.",
-        keys: &[Shortcut::NewTerminal, Shortcut::NewBrowser],
+        keys: &[Shortcut::NewTerminal],
     },
     Step {
         title: "Zoom out to see the whole thing.",

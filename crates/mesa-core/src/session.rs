@@ -12,8 +12,9 @@
 //! app that opens empty, so every check here fails toward empty rather than
 //! toward a panic.
 //!
-//! The file format is the one the Electron build wrote, field for field, so a
-//! layout saved by v1.x opens in this build unchanged.
+//! The file format is the one the Electron build wrote, so a layout saved by
+//! v1.x opens in this build. The one exception is browser panes, which this
+//! build no longer has: they are passed over on the way in.
 
 use std::collections::HashSet;
 
@@ -21,19 +22,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub const SESSION_VERSION: u32 = 2;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum PaneKind {
-    Terminal,
-    Browser,
-}
-
-impl PaneKind {
-    pub fn is_browser(self) -> bool {
-        self == PaneKind::Browser
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pan {
@@ -53,9 +41,8 @@ impl Default for View {
     }
 }
 
-/// One session inside a pane: a terminal with a folder and a command, or a
-/// browser on an address. The pane is the box they sit in, and the box holds
-/// any number of them.
+/// One session inside a pane: a terminal with a folder and a command. The
+/// pane is the box they sit in, and the box holds any number of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tab {
@@ -67,15 +54,12 @@ pub struct Tab {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pane {
     pub id: String,
-    pub kind: PaneKind,
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -164,50 +148,32 @@ fn normalize_view(raw: Option<&Value>) -> View {
     View { zoom, pan: Pan { x, y } }
 }
 
-fn is_http(url: &str) -> bool {
-    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
-}
-
-fn normalize_tab(raw: &Value, kind: PaneKind) -> Option<Tab> {
+fn normalize_tab(raw: &Value) -> Option<Tab> {
     let id = text(raw.get("id"))?;
-    let title = text(raw.get("title"))
-        .map(str::to_string)
-        .unwrap_or_else(|| if kind.is_browser() { "Browser" } else { "Terminal" }.to_string());
+    let title = text(raw.get("title")).unwrap_or("Terminal").to_string();
     let mut tab = Tab {
         id: id.to_string(),
         title,
-        // A name the user typed sticks; one derived from the folder or the
-        // page keeps following what is in the session.
+        // A name the user typed sticks; one derived from the folder keeps
+        // following what is in the session.
         title_locked: raw.get("titleLocked") == Some(&Value::Bool(true)),
         cwd: None,
         command: None,
-        url: None,
     };
-    // The folder a terminal was last sitting in, and the page a browser was
-    // last on. Absent is normal, so neither is worth failing over.
-    if kind == PaneKind::Terminal {
-        if let Some(cwd) = text(raw.get("cwd")) {
-            tab.cwd = Some(cwd.to_string());
-        }
-        // The startup command is submitted at the tab's prompt on open, so
-        // what is stored here has to be exactly one line: an embedded return
-        // would run a second command nobody typed, and this file is plain
-        // text that anything could have edited. Every C0 goes, not just the
-        // returns, so one stored command can only ever be one command.
-        if let Some(command) = text(raw.get("command")) {
-            let command = strip_controls(command);
-            if !command.is_empty() {
-                tab.command = Some(command);
-            }
-        }
+    // The folder the terminal was last sitting in. Absent is normal, so it is
+    // not worth failing over.
+    if let Some(cwd) = text(raw.get("cwd")) {
+        tab.cwd = Some(cwd.to_string());
     }
-    // http(s) only. A saved address is replayed into a page on launch with no
-    // one watching, so the one scheme a browser tab can be opened on is the
-    // one a browser tab can reach by itself.
-    if kind == PaneKind::Browser {
-        if let Some(url) = text(raw.get("url")).filter(|u| is_http(u)) {
-            tab.url = Some(url.to_string());
+    // The startup command is submitted at the tab's prompt on open, so what
+    // is stored here has to be exactly one line: an embedded return would run
+    // a second command nobody typed, and this file is plain text that
+    // anything could have edited. Every C0 goes, not just the returns, so one
+    // stored command can only ever be one command.
+    if let Some(command) = text(raw.get("command")) {
+        let command = strip_controls(command);
+        if !command.is_empty() {
+            tab.command = Some(command);
         }
     }
     Some(tab)
@@ -215,10 +181,12 @@ fn normalize_tab(raw: &Value, kind: PaneKind) -> Option<Tab> {
 
 fn normalize_pane(raw: &Value, seen_tab_ids: &mut HashSet<String>) -> Option<Pane> {
     let id = text(raw.get("id"))?;
-    let kind = match raw.get("kind").and_then(Value::as_str) {
-        Some("browser") => PaneKind::Browser,
-        _ => PaneKind::Terminal,
-    };
+    // Browser panes were removed. One saved by an older build is passed over
+    // rather than reopened as a shell under a page's name: a missing or any
+    // other kind is a terminal, as it always was.
+    if raw.get("kind").and_then(Value::as_str) == Some("browser") {
+        return None;
+    }
     let x = num(raw.get("x"))?;
     let y = num(raw.get("y"))?;
     // A pane with no size is a pane you cannot find again. Rather than guess a
@@ -231,7 +199,7 @@ fn normalize_pane(raw: &Value, seen_tab_ids: &mut HashSet<String>) -> Option<Pan
         // Tab ids come off the same counter pane ids do, so a duplicate would
         // put two live sessions on one id — one terminal's keystrokes
         // arriving in another's pty.
-        let Some(tab) = normalize_tab(candidate, kind) else { continue };
+        let Some(tab) = normalize_tab(candidate) else { continue };
         if !seen_tab_ids.insert(tab.id.clone()) {
             continue;
         }
@@ -251,7 +219,6 @@ fn normalize_pane(raw: &Value, seen_tab_ids: &mut HashSet<String>) -> Option<Pan
 
     Some(Pane {
         id: id.to_string(),
-        kind,
         x,
         y,
         width,
@@ -292,13 +259,13 @@ fn normalize_workflow(
 }
 
 /// Version 1 knew nothing about tabs: a pane WAS a session, and carried the
-/// folder, the address and the startup command itself. Version 2 turns the
-/// pane into a box, so each of those panes becomes a box holding exactly the
-/// one session it already was.
+/// folder and the startup command itself. Version 2 turns the pane into a
+/// box, so each of those panes becomes a box holding exactly the one session
+/// it already was.
 ///
 /// The tab keeps the pane's id. In v1 that id was the terminal's id — it is
-/// what the pty, the title, the folder and the address were all keyed by — so
-/// handing it to the tab is the same session keeping its name.
+/// what the pty, the title and the folder were all keyed by — so handing it
+/// to the tab is the same session keeping its name.
 fn migrate_v1(raw: &Value) -> Value {
     let mut out = raw.clone();
     out["version"] = Value::from(SESSION_VERSION);
@@ -317,7 +284,7 @@ fn migrate_v1(raw: &Value) -> Value {
                 .into_iter()
                 .map(|mut pane| {
                     let mut tab = Map::new();
-                    for key in ["id", "title", "titleLocked", "cwd", "url", "command"] {
+                    for key in ["id", "title", "titleLocked", "cwd", "command"] {
                         if let Some(v) = pane.get(key) {
                             tab.insert(key.to_string(), v.clone());
                         }

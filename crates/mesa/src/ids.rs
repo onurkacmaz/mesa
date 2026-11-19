@@ -1,6 +1,6 @@
 //! The id counters. One for panes and tabs alike (a tab IS what a pane used
-//! to be: its id is what the pty, the title, the folder and the address are
-//! keyed by), one for workflows, and one that numbers default names
+//! to be: its id is what the pty, the title and the folder are keyed by),
+//! one for workflows, and one that numbers default names
 //! ("Terminal 4").
 //!
 //! They start at zero every launch, which is right for a first launch and

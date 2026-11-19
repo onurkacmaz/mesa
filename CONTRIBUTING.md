@@ -42,14 +42,6 @@ On Linux the same works headless under Xvfb with a window manager running
 (GPUI only draws a window the server says is visible), driven by `xdotool` and
 captured with `import -window root`.
 
-The macOS-only page code lives in `crates/mesa-webview` so it can be
-type-checked from any machine:
-
-```sh
-rustup target add aarch64-apple-darwin
-cargo check -p mesa-webview --target aarch64-apple-darwin
-```
-
 ## Style
 
 `rustfmt` defaults, except that lines run long rather than wrap a builder

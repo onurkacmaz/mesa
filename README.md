@@ -7,9 +7,7 @@ and come back to it in the same place tomorrow.
 
 A tabbed terminal makes you remember which tab is which. Mesa gives every
 session a *place* instead: drag windows anywhere on an unbounded surface, zoom
-out to see the whole workspace, zoom back in to work. Browser panes sit on the
-same canvas, so the thing you are building and the page you are checking it on
-are side by side rather than behind each other.
+out to see the whole workspace, zoom back in to work.
 
 ## Install
 
@@ -48,12 +46,11 @@ started from.
 
 | | |
 |---|---|
-| `⌘N` / `⌘B` | new terminal / new browser |
+| `⌘N` | new terminal |
 | `⌘1`–`⌘9` | switch tab |
 | `⌘T` | new workflow |
 | `⌥⌘1`–`⌥⌘9` | switch workflow |
 | `⌘W` | close the innermost thing: tab, then window, then workflow |
-| `⌘L` | focus a browser pane's address bar |
 | `⌘E` / `⇧⌘E` | open the selected terminal's folder in your editor / in a different one |
 | `⌘0` / `⇧⌘0` | actual size / fit everything |
 | `⌘` + scroll | zoom |
@@ -65,11 +62,12 @@ menu.
 
 ## What it remembers
 
-Workflows, panes, tabs, the canvas view, every terminal's folder and every
-browser's address are written to `session.json` in the app's data directory
+Workflows, panes, tabs, the canvas view and every terminal's folder are
+written to `session.json` in the app's data directory
 (`~/Library/Application Support/Mesa`) and read back on launch. It is the same
 file, in the same place and the same format, that the Electron releases wrote:
-a layout saved by Mesa 1.x opens in 2.0 unchanged.
+a layout saved by Mesa 1.x opens in 2.0 unchanged, except that any browser
+panes in it are left out, since Mesa no longer has them.
 
 A pty dies with the app, so a restored terminal is a **fresh shell standing in
 the folder it was left in** — the layout comes back, the running processes do
@@ -93,17 +91,9 @@ one opens the folder and becomes the new default.
 Worth knowing before you try it:
 
 - **macOS on Apple Silicon is the platform.** It also builds and runs on Linux
-  (X11 and Wayland, through GPUI), where the app keys are `⌃⇧` rather than `⌘`
-  and a browser pane cannot embed a page — it offers to open the address in
-  the system browser instead. Linux is not packaged or regularly tested.
+  (X11 and Wayland, through GPUI), where the app keys are `⌃⇧` rather than
+  `⌘`. Linux is not packaged or regularly tested.
 - **The DMG is unsigned and un-notarised.** See the install note above.
-- **A page is a native view laid over the canvas.** GPUI draws everything
-  else itself, but a web page it cannot draw, so a browser pane's page is the
-  system's WKWebView placed over the pane. A native view cannot be clipped or
-  covered by anything the canvas paints, so the page is hidden — and a quiet
-  placeholder stands in — whenever something should be in front of it: another
-  pane overlapping it, a menu, a question, the minimap, or the pane running off
-  the edge of the canvas. Move the pane into the clear and the page comes back.
 - **"Is something running?" needs zsh.** The check that makes `⌘W` ask before
   killing a live command relies on a zsh prompt hook (OSC 133). Under bash,
   fish or anything else, panes close without asking, and the completion list
@@ -113,7 +103,7 @@ Worth knowing before you try it:
 
 ## How it is put together
 
-Three crates in one workspace.
+Two crates in one workspace.
 
 ```
 crates/mesa-core/     pure: what a session file is, how completions are ranked,
@@ -123,10 +113,8 @@ crates/mesa/          the app: GPUI window, canvas, panes, terminals, persistenc
   src/ui/app.rs       the window and the workflow strip
   src/ui/workspace.rs the canvas: pan, zoom, selection, pane lifecycle, dock, minimap
   src/ui/terminal_*.rs one terminal tab: the grid painted, keys, completion list
-  src/ui/browser_view.rs a browser pane's chrome around a native page
   src/completion.rs   files, branches, PATH, history and the shipped command schemas
   src/storage.rs      the disk: session.json, flags.json, written atomically
-crates/mesa-webview/  the native page (WKWebView through wry), free of GPUI
 ```
 
 The terminal is [alacritty_terminal](https://crates.io/crates/alacritty_terminal)'s

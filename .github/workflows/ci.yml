@@ -8,9 +8,8 @@ on:
 jobs:
   test:
     # macOS because that is the platform this app is built for, and the one
-    # GPUI's Metal renderer and the WKWebView pages are compiled against. The
-    # core tests are pure and would pass anywhere; the app is what needs the
-    # right platform.
+    # GPUI's Metal renderer is compiled against. The core tests are pure and
+    # would pass anywhere; the app is what needs the right platform.
     runs-on: macos-latest
 
     steps:
@@ -25,5 +24,3 @@ jobs:
       # Catches what the unit tests cannot: an app that no longer builds in
       # release, where LTO and the bundled schemas are in play.
       - run: cargo build --release -p mesa
-
-      - run: cargo build -p mesa-webview

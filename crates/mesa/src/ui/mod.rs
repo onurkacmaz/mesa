@@ -2,7 +2,6 @@
 //! everything that sits on a canvas.
 
 pub mod app;
-pub mod browser_view;
 pub mod onboarding;
 pub mod terminal_element;
 pub mod terminal_view;
@@ -109,15 +108,6 @@ pub enum Icon {
     Tick,
     Prompt,
     Brand,
-    Page,
-    Back,
-    Forward,
-    Refresh,
-    Stop,
-    More,
-    Lock,
-    Info,
-    Search,
 }
 
 impl Icon {
@@ -130,15 +120,6 @@ impl Icon {
             Icon::Tick => "icons/tick.svg",
             Icon::Prompt => "icons/prompt.svg",
             Icon::Brand => "icons/brand.svg",
-            Icon::Page => "icons/page.svg",
-            Icon::Back => "icons/back.svg",
-            Icon::Forward => "icons/forward.svg",
-            Icon::Refresh => "icons/refresh.svg",
-            Icon::Stop => "icons/stop.svg",
-            Icon::More => "icons/more.svg",
-            Icon::Lock => "icons/lock.svg",
-            Icon::Info => "icons/info.svg",
-            Icon::Search => "icons/search.svg",
         }
     }
 }
@@ -160,10 +141,7 @@ impl gpui::AssetSource for Assets {
                 }
             };
         }
-        let bytes = icons!(
-            "close", "plus", "minus", "startup", "tick", "prompt", "brand", "page", "back", "forward",
-            "refresh", "stop", "more", "lock", "info", "search"
-        );
+        let bytes = icons!("close", "plus", "minus", "startup", "tick", "prompt", "brand");
         Ok(bytes.map(std::borrow::Cow::Borrowed))
     }
 
@@ -181,7 +159,6 @@ pub enum Shortcut {
     NewWorkflow,
     SwitchWorkflow,
     NewTerminal,
-    NewBrowser,
     OpenInEditor,
     Command,
     Space,
@@ -198,7 +175,6 @@ impl Shortcut {
             Shortcut::NewWorkflow => if mac { "⌘T" } else { "Ctrl⇧T" },
             Shortcut::SwitchWorkflow => if mac { "⌥⌘1–9" } else { "Alt1–9" },
             Shortcut::NewTerminal => if mac { "⌘N" } else { "Ctrl⇧N" },
-            Shortcut::NewBrowser => if mac { "⌘B" } else { "Ctrl⇧B" },
             Shortcut::OpenInEditor => if mac { "⌘E" } else { "Ctrl⇧E" },
             Shortcut::Command => if mac { "⌘" } else { "Ctrl" },
             Shortcut::Space => "space",

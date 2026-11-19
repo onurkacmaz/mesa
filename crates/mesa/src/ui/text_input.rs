@@ -1,5 +1,5 @@
 //! A single-line text field: workflow names, pane titles, the startup
-//! command, the omnibox. Every one of them is a short line that is committed
+//! command. Every one of them is a short line that is committed
 //! with return and abandoned with esc, so that is the whole of what this does.
 
 use std::ops::Range;

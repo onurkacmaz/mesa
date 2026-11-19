@@ -8,7 +8,7 @@ body:
       label: What happened
       description: What you did, and what Mesa did instead of what you expected.
       placeholder: |
-        Opened a browser pane, pressed ⌘L, and the address bar did not take focus.
+        Pressed ⌘W on a pane running a command, and it closed without asking.
     validations:
       required: true
 

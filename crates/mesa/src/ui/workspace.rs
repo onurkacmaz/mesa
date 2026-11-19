@@ -19,11 +19,10 @@ use gpui::{
 use mesa_core::{
     editors::{editors_from, resolve_editor, Editor},
     naming::{split_name, Name},
-    session::{strip_controls, Pan, Pane as SavedPane, PaneKind, Tab as SavedTab, View, Workflow},
+    session::{strip_controls, Pan, Pane as SavedPane, Tab as SavedTab, View, Workflow},
 };
 
 use super::{
-    browser_view::{BrowserEvent, BrowserView},
     glyph_button, icon, kbd, r,
     terminal_view::{TerminalEvent, TerminalView},
     text_input::{InputEvent, TextInput},
@@ -31,8 +30,7 @@ use super::{
 };
 use crate::{ids, platform, theme::Theme};
 
-/// A terminal and a browser open at the same size, and the browser decides
-/// it: below ~800px wide sites drop into their narrow layout.
+/// Every new terminal opens at this size.
 const DEFAULT_SIZE: (f32, f32) = (1360.0, 780.0);
 const CASCADE_STEP: f32 = 32.0;
 const MIN_SIZE: (f32, f32) = (360.0, 220.0);
@@ -80,24 +78,18 @@ fn ease_out_back(t: f32) -> f32 {
     1.0 + (c + 1.0) * u.powi(3) + c * u.powi(2)
 }
 
-pub enum TabView {
-    Terminal(Entity<TerminalView>),
-    Browser(Entity<BrowserView>),
-}
-
 pub struct TabState {
     pub id: String,
     pub title: String,
     pub title_locked: bool,
-    /// Something the user set ON the tab, unlike the folder and the address.
+    /// Something the user set ON the tab, unlike the folder.
     pub command: Option<String>,
-    pub view: TabView,
+    pub view: Entity<TerminalView>,
     _sub: Subscription,
 }
 
 pub struct Pane {
     pub id: String,
-    pub kind: PaneKind,
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -187,11 +179,7 @@ pub struct Workspace {
     focus_handle: FocusHandle,
     z_counter: f64,
     pub editor_pref: Option<String>,
-    pub active: bool,
     pub hide_empty_hint: bool,
-    /// Something is drawn over the canvas (the onboarding, a workflow close
-    /// question), so a native page must not be shown over it.
-    pub covered: bool,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -279,9 +267,7 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             z_counter: 1.0,
             editor_pref: None,
-            active: false,
             hide_empty_hint: false,
-            covered: false,
         };
         if let Some(saved) = saved {
             for pane in saved.panes {
@@ -289,11 +275,10 @@ impl Workspace {
                 let tabs = pane
                     .tabs
                     .iter()
-                    .map(|t| this.make_tab_state(pane.kind, t.clone(), pane.width as f32, pane.height as f32, window, cx))
+                    .map(|t| this.make_tab_state(t.clone(), pane.width as f32, pane.height as f32, window, cx))
                     .collect();
                 this.panes.push(Pane {
                     id: pane.id,
-                    kind: pane.kind,
                     x: pane.x as f32,
                     y: pane.y as f32,
                     width: pane.width as f32,
@@ -307,68 +292,22 @@ impl Workspace {
         this
     }
 
-    fn make_tab_state(&mut self, kind: PaneKind, saved: SavedTab, w: f32, h: f32, window: &mut Window, cx: &mut Context<Self>) -> TabState {
-        let (view, sub) = match kind {
-            PaneKind::Terminal => {
-                let screen_h = h - TITLEBAR_H - 2.0;
-                let id = saved.id.clone();
-                let cwd = saved.cwd.clone();
-                let command = saved.command.clone();
-                let v = cx.new(|cx| TerminalView::new(id, cwd, command, w - 2.0, screen_h, window, cx));
-                // Only a folder change is worth writing down. The running
-                // timer ticks four times a second and must not keep pushing
-                // the debounced save back for as long as a command runs.
-                let sub = cx.subscribe(&v, |_, _, e: &TerminalEvent, cx| {
-                    if matches!(e, TerminalEvent::CwdChanged) {
-                        cx.emit(WorkspaceEvent::Dirty);
-                    }
-                    cx.notify();
-                });
-                (TabView::Terminal(v), sub)
+    fn make_tab_state(&mut self, saved: SavedTab, w: f32, h: f32, window: &mut Window, cx: &mut Context<Self>) -> TabState {
+        let screen_h = h - TITLEBAR_H - 2.0;
+        let id = saved.id.clone();
+        let cwd = saved.cwd.clone();
+        let command = saved.command.clone();
+        let view = cx.new(|cx| TerminalView::new(id, cwd, command, w - 2.0, screen_h, window, cx));
+        // Only a folder change is worth writing down. The running timer ticks
+        // four times a second and must not keep pushing the debounced save
+        // back for as long as a command runs.
+        let sub = cx.subscribe(&view, |_, _, e: &TerminalEvent, cx| {
+            if matches!(e, TerminalEvent::CwdChanged) {
+                cx.emit(WorkspaceEvent::Dirty);
             }
-            PaneKind::Browser => {
-                let id = saved.id.clone();
-                let url = saved.url.clone();
-                let v = cx.new(|cx| BrowserView::new(id, url, window, cx));
-                let sub = cx.subscribe_in(&v, window, |this, _, e: &BrowserEvent, window, cx| match e {
-                    BrowserEvent::StatusChanged => cx.notify(),
-                    BrowserEvent::UrlChanged => {
-                        cx.emit(WorkspaceEvent::Dirty);
-                        cx.notify();
-                    }
-                    BrowserEvent::Shortcut { key, shift, alt } => {
-                        this.guest_shortcut(key, *shift, *alt, window, cx);
-                    }
-                });
-                (TabView::Browser(v), sub)
-            }
-        };
+            cx.notify();
+        });
         TabState { id: saved.id, title: saved.title, title_locked: saved.title_locked, command: saved.command, view, _sub: sub }
-    }
-
-    /// A shortcut typed inside a page, replayed as if it had been typed on
-    /// the canvas.
-    fn guest_shortcut(&mut self, key: &str, shift: bool, alt: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let action: Box<dyn gpui::Action> = match (key, alt) {
-            ("w", _) => Box::new(super::app::CloseSelection),
-            ("n", _) => Box::new(super::app::NewTerminal),
-            ("b", _) => Box::new(super::app::NewBrowser),
-            ("t", _) => Box::new(super::app::NewWorkflow),
-            ("l", _) => Box::new(super::app::FocusOmnibox),
-            (d, true) if d.len() == 1 => match d.parse::<usize>() {
-                Ok(n) => Box::new(super::app::SwitchWorkflow(n)),
-                Err(_) => return,
-            },
-            (d, false) if d.len() == 1 => match d.parse::<usize>() {
-                Ok(n) => Box::new(super::app::SwitchTab(n)),
-                Err(_) => return,
-            },
-            _ => return,
-        };
-        let _ = shift;
-        // Taken back off the page first, so the action lands on the app.
-        window.focus(&self.focus_handle);
-        window.dispatch_action(action, cx);
     }
 
     fn rect_of(&self, p: &Pane) -> Bounds<Pixels> {
@@ -499,41 +438,32 @@ impl Workspace {
     /// bumped every time a pane is opened, selected or dragged — and within
     /// a box the tab in front answers before the ones behind it.
     fn last_used_cwd(&self, cx: &App) -> Option<String> {
-        let mut terminals: Vec<&Pane> = self.panes.iter().filter(|p| p.kind == PaneKind::Terminal).collect();
-        terminals.sort_by(|a, b| b.z.partial_cmp(&a.z).unwrap_or(std::cmp::Ordering::Equal));
-        for pane in terminals {
+        let mut panes: Vec<&Pane> = self.panes.iter().collect();
+        panes.sort_by(|a, b| b.z.partial_cmp(&a.z).unwrap_or(std::cmp::Ordering::Equal));
+        for pane in panes {
             let ordered = pane.tabs.iter().filter(|t| t.id == pane.active_tab_id).chain(pane.tabs.iter().filter(|t| t.id != pane.active_tab_id));
             for tab in ordered {
-                if let TabView::Terminal(v) = &tab.view {
-                    if let Some(c) = v.read(cx).status.cwd.clone() {
-                        return Some(c);
-                    }
+                if let Some(c) = tab.view.read(cx).status.cwd.clone() {
+                    return Some(c);
                 }
             }
         }
         None
     }
 
-    fn new_saved_tab(kind: PaneKind, cwd: Option<String>) -> SavedTab {
+    fn new_saved_tab(cwd: Option<String>) -> SavedTab {
         let n = ids::next_session();
-        SavedTab {
-            id: ids::next_id("term"),
-            title: if kind.is_browser() { format!("Browser {n}") } else { format!("Terminal {n}") },
-            title_locked: false,
-            cwd,
-            command: None,
-            url: None,
-        }
+        SavedTab { id: ids::next_id("term"), title: format!("Terminal {n}"), title_locked: false, cwd, command: None }
     }
 
-    /// A new session joins the selected window when that window is the same
-    /// kind, and opens its own window otherwise: a box keeps to one kind.
-    pub fn add_pane(&mut self, kind: PaneKind, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd = if kind.is_browser() { None } else { self.last_used_cwd(cx) };
+    /// A new session joins the selected window when there is exactly one, and
+    /// opens its own window otherwise.
+    pub fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cwd = self.last_used_cwd(cx);
         if self.selected.len() == 1 {
-            if let Some(idx) = self.panes.iter().position(|p| p.id == self.selected[0] && p.kind == kind) {
+            if let Some(idx) = self.panes.iter().position(|p| p.id == self.selected[0]) {
                 let (w, h) = (self.panes[idx].width, self.panes[idx].height);
-                let tab = self.make_tab_state(kind, Self::new_saved_tab(kind, cwd), w, h, window, cx);
+                let tab = self.make_tab_state(Self::new_saved_tab(cwd), w, h, window, cx);
                 let id = tab.id.clone();
                 self.panes[idx].tabs.push(tab);
                 self.panes[idx].active_tab_id = id;
@@ -553,10 +483,10 @@ impl Workspace {
         let x = (w / 2.0 - self.pan.0) / self.zoom - sw / 2.0 + offset;
         let y = (h / 2.0 - self.pan.1) / self.zoom - sh / 2.0 + offset;
         self.z_counter += 1.0;
-        let tab = self.make_tab_state(kind, Self::new_saved_tab(kind, cwd), sw, sh, window, cx);
+        let tab = self.make_tab_state(Self::new_saved_tab(cwd), sw, sh, window, cx);
         let id = ids::next_id("pane");
         let active = tab.id.clone();
-        self.panes.push(Pane { id: id.clone(), kind, x, y, width: sw, height: sh, z: self.z_counter, tabs: vec![tab], active_tab_id: active });
+        self.panes.push(Pane { id: id.clone(), x, y, width: sw, height: sh, z: self.z_counter, tabs: vec![tab], active_tab_id: active });
         self.selected = vec![id.clone()];
         self.focus_pane(&id, window, cx);
         self.dirty(cx);
@@ -565,13 +495,7 @@ impl Workspace {
     /// Hands the keyboard to the session in front of a pane.
     fn focus_pane(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(p) = self.panes.iter().find(|p| p.id == id) else { return };
-        match &p.active_tab().view {
-            TabView::Terminal(v) => window.focus(&v.focus_handle(cx)),
-            TabView::Browser(v) => {
-                window.focus(&v.focus_handle(cx));
-                v.read(cx).focus_page();
-            }
-        }
+        window.focus(&p.active_tab().view.focus_handle(cx));
     }
 
     /// Clicking an unselected pane selects just it; clicking one already
@@ -617,7 +541,7 @@ impl Workspace {
     }
 
     fn tab_running(tab: &TabState, cx: &App) -> bool {
-        matches!(&tab.view, TabView::Terminal(v) if v.read(cx).is_running())
+        tab.view.read(cx).is_running()
     }
 
     /// How many sessions here have a command in flight. Read at the one
@@ -633,13 +557,6 @@ impl Workspace {
     fn remove_panes(&mut self, ids: &[String], cx: &mut Context<Self>) {
         // Dropping a tab's view ends its session, and with it the whole
         // process group inside it.
-        for p in self.panes.iter_mut().filter(|p| ids.contains(&p.id)) {
-            for t in &p.tabs {
-                if let TabView::Browser(b) = &t.view {
-                    b.update(cx, |b, _| b.hide());
-                }
-            }
-        }
         self.panes.retain(|p| !ids.contains(&p.id));
         self.selected.retain(|s| !ids.contains(s));
         self.dirty(cx);
@@ -650,9 +567,6 @@ impl Workspace {
         let Some(index) = p.tabs.iter().position(|t| t.id == tab) else { return };
         if p.tabs.len() <= 1 {
             return;
-        }
-        if let TabView::Browser(b) = &p.tabs[index].view {
-            b.update(cx, |b, _| b.hide());
         }
         p.tabs.remove(index);
         // The tab to its left, the way every tabbed thing does it.
@@ -666,7 +580,7 @@ impl Workspace {
 
     /// Every way out of a pane kills the process group inside it, so every
     /// way out asks first — but only when there is work in flight. An idle
-    /// prompt and a page close on the spot.
+    /// prompt closes on the spot.
     fn request_close_panes(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         if ids.is_empty() {
             return;
@@ -785,10 +699,7 @@ impl Workspace {
     /// reported through OSC 7.
     fn folder_of(&self, pane: &str, cx: &App) -> Option<String> {
         let p = self.panes.iter().find(|p| p.id == pane)?;
-        match &p.active_tab().view {
-            TabView::Terminal(v) => v.read(cx).status.cwd.clone(),
-            TabView::Browser(_) => None,
-        }
+        p.active_tab().view.read(cx).status.cwd.clone()
     }
 
     fn use_editor(&mut self, app: String, dir: &str, cx: &mut Context<Self>) {
@@ -849,25 +760,13 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn focus_omnibox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected.len() != 1 {
-            return;
-        }
-        let Some(p) = self.panes.iter().find(|p| p.id == self.selected[0]) else { return };
-        if let TabView::Browser(b) = &p.active_tab().view {
-            b.update(cx, |b, cx| b.begin_editing(window, cx));
-        }
-    }
-
     pub fn apply_theme(&mut self, theme: &Theme, cx: &mut Context<Self>) {
         for p in &self.panes {
             for t in &p.tabs {
-                if let TabView::Terminal(v) = &t.view {
-                    v.update(cx, |v, cx| {
-                        v.set_theme(theme);
-                        cx.notify();
-                    });
-                }
+                t.view.update(cx, |v, cx| {
+                    v.set_theme(theme);
+                    cx.notify();
+                });
             }
         }
     }
@@ -879,22 +778,8 @@ impl Workspace {
     pub fn shutdown(&self, cx: &App) {
         for p in &self.panes {
             for t in &p.tabs {
-                if let TabView::Terminal(v) = &t.view {
-                    if let Some(s) = &v.read(cx).session {
-                        s.kill();
-                    }
-                }
-            }
-        }
-    }
-
-    /// Hides every native page; a workflow going into the background must
-    /// not leave its pages floating over the next one.
-    pub fn hide_pages(&mut self, cx: &mut Context<Self>) {
-        for p in &self.panes {
-            for t in &p.tabs {
-                if let TabView::Browser(b) = &t.view {
-                    b.update(cx, |b, _| b.hide());
+                if let Some(s) = &t.view.read(cx).session {
+                    s.kill();
                 }
             }
         }
@@ -904,21 +789,16 @@ impl Workspace {
 
     /// A terminal is named after the work in it — the folder, and the branch
     /// when it differs from the folder — not after the order it was opened
-    /// in. A browser carries the page's title. A name the user typed sticks.
-    fn title_of(&self, kind: PaneKind, tab: &TabState, cx: &App) -> String {
+    /// in. A name the user typed sticks.
+    fn title_of(&self, tab: &TabState, cx: &App) -> String {
         if tab.title_locked {
             return tab.title.clone();
         }
-        match &tab.view {
-            TabView::Browser(b) => b.read(cx).page_title.clone().unwrap_or_else(|| tab.title.clone()),
-            TabView::Terminal(v) => {
-                let s = &v.read(cx).status;
-                let Some(folder) = s.cwd.as_deref().map(folder_name) else { return tab.title.clone() };
-                match &s.branch {
-                    Some(b) if *b != folder && kind == PaneKind::Terminal => format!("{folder} -> {b}"),
-                    _ => folder,
-                }
-            }
+        let s = &tab.view.read(cx).status;
+        let Some(folder) = s.cwd.as_deref().map(folder_name) else { return tab.title.clone() };
+        match &s.branch {
+            Some(b) if *b != folder => format!("{folder} -> {b}"),
+            _ => folder,
         }
     }
 
@@ -926,7 +806,7 @@ impl Workspace {
     /// nothing. Numbered only where there is a clash, and by WHEN the session
     /// was opened, so a name stays put when its tab is dragged.
     fn strip_labels(&self, pane: &Pane, cx: &App) -> Vec<String> {
-        let names: Vec<String> = pane.tabs.iter().map(|t| self.title_of(pane.kind, t, cx)).collect();
+        let names: Vec<String> = pane.tabs.iter().map(|t| self.title_of(t, cx)).collect();
         let mut order: Vec<usize> = (0..pane.tabs.len()).collect();
         order.sort_by_key(|&i| trailing_number(&pane.tabs[i].id));
         let mut seen: std::collections::HashMap<&str, usize> = Default::default();
@@ -941,21 +821,21 @@ impl Workspace {
         names.iter().zip(nth).map(|(n, k)| if k > 0 { format!("{n} {k}") } else { n.clone() }).collect()
     }
 
-    pub fn pane_names(&self, cx: &App) -> Vec<(String, PaneKind, Name)> {
+    pub fn pane_names(&self, cx: &App) -> Vec<(String, Name)> {
         self.panes
             .iter()
             .map(|p| {
                 let tab = p.active_tab();
-                (p.id.clone(), p.kind, split_name(&self.title_of(p.kind, tab, cx), tab.title_locked))
+                (p.id.clone(), split_name(&self.title_of(tab, cx), tab.title_locked))
             })
             .collect()
     }
 
     // ── Persistence ────────────────────────────────────────────────────────
 
-    /// This workflow as it would be written to disk: the live folder and
-    /// address, not the ones the tab opened with, and the session's own name
-    /// rather than the one it is wearing.
+    /// This workflow as it would be written to disk: the live folder, not the
+    /// one the tab opened with, and the session's own name rather than the
+    /// one it is wearing.
     pub fn serialize(&self, name: &str, cx: &App) -> Workflow {
         Workflow {
             id: self.id.clone(),
@@ -966,7 +846,6 @@ impl Workspace {
                 .iter()
                 .map(|p| SavedPane {
                     id: p.id.clone(),
-                    kind: p.kind,
                     x: p.x as f64,
                     y: p.y as f64,
                     width: p.width as f64,
@@ -976,22 +855,12 @@ impl Workspace {
                     tabs: p
                         .tabs
                         .iter()
-                        .map(|t| {
-                            let (cwd, url) = match &t.view {
-                                TabView::Terminal(v) => (v.read(cx).status.cwd.clone(), None),
-                                TabView::Browser(b) => {
-                                    let u = b.read(cx).url.clone();
-                                    (None, (!u.is_empty()).then_some(u))
-                                }
-                            };
-                            SavedTab {
-                                id: t.id.clone(),
-                                title: t.title.clone(),
-                                title_locked: t.title_locked,
-                                cwd,
-                                command: if p.kind == PaneKind::Terminal { t.command.clone() } else { None },
-                                url,
-                            }
+                        .map(|t| SavedTab {
+                            id: t.id.clone(),
+                            title: t.title.clone(),
+                            title_locked: t.title_locked,
+                            cwd: t.view.read(cx).status.cwd.clone(),
+                            command: t.command.clone(),
                         })
                         .collect(),
                 })
@@ -1214,7 +1083,7 @@ impl Workspace {
     fn begin_title_edit(&mut self, pane: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(p) = self.panes.iter().find(|p| p.id == pane) else { return };
         let tab = p.active_tab();
-        let current = self.title_of(p.kind, tab, cx);
+        let current = self.title_of(tab, cx);
         let (pane, tab) = (pane.to_string(), tab.id.clone());
         let input = self.make_input(current, "", window, cx);
         let sub = cx.subscribe_in(&input, window, |this, _, e: &InputEvent, window, cx| match e {
@@ -1341,9 +1210,8 @@ impl Workspace {
         let focused = self.selected.len() == 1 && self.selected[0] == pane.id;
         let selected = self.selected.contains(&pane.id);
         let pending = self.pending_close.as_ref().map(|ids| ids.contains(&pane.id)).unwrap_or(false);
-        let is_browser = pane.kind.is_browser();
         let tab = pane.active_tab();
-        let title = self.title_of(pane.kind, tab, cx);
+        let title = self.title_of(tab, cx);
         let accent = theme.accent;
         let border: Hsla = if pending {
             theme.danger
@@ -1355,24 +1223,20 @@ impl Workspace {
             theme.pane_border
         };
 
-        let (status_text, status_color, cwd_text): (Option<String>, Hsla, Option<String>) = match &tab.view {
-            TabView::Terminal(v) => {
-                let s = &v.read(cx).status;
-                let st = if s.exited {
-                    (Some("exited".to_string()), theme.text_ghost)
-                } else if let Some(since) = s.running_since {
-                    (Some(format_elapsed(since.elapsed().as_secs())), theme.text_dim)
-                } else if let Some(code) = s.last_exit {
-                    (Some(format!("exit {code}")), theme.danger)
-                } else {
-                    (None, theme.text_dim)
-                };
-                let cwd = s.cwd.as_ref().filter(|_| !s.exited).map(|c| short_path(c));
-                (st.0, st.1, cwd)
-            }
-            TabView::Browser(_) => (None, theme.text_dim, None),
+        let (status_text, status_color, cwd_text): (Option<String>, Hsla, Option<String>) = {
+            let s = &tab.view.read(cx).status;
+            let st = if s.exited {
+                (Some("exited".to_string()), theme.text_ghost)
+            } else if let Some(since) = s.running_since {
+                (Some(format_elapsed(since.elapsed().as_secs())), theme.text_dim)
+            } else if let Some(code) = s.last_exit {
+                (Some(format!("exit {code}")), theme.danger)
+            } else {
+                (None, theme.text_dim)
+            };
+            let cwd = s.cwd.as_ref().filter(|_| !s.exited).map(|c| short_path(c));
+            (st.0, st.1, cwd)
         };
-        let loading = matches!(&tab.view, TabView::Browser(b) if b.read(cx).loading);
 
         let pane_id = pane.id.clone();
         let editing_title = self.title_edit.as_ref().filter(|e| e.pane == pane.id && e.tab == tab.id).map(|e| e.input.clone());
@@ -1405,7 +1269,7 @@ impl Workspace {
                     this.focus_pane(&id, window, cx);
                 })
             });
-        if !is_browser {
+        {
             let id = pane_id.clone();
             titlebar = titlebar.on_mouse_down(
                 MouseButton::Right,
@@ -1415,16 +1279,7 @@ impl Workspace {
                 }),
             );
         }
-        let mark = if is_browser {
-            if loading {
-                icon(Icon::Refresh, 13., theme.text_dim).into_any_element()
-            } else {
-                icon(Icon::Page, 13., if focused { theme.text_mid } else { theme.text_dim }).into_any_element()
-            }
-        } else {
-            icon(Icon::Prompt, 11., accent).into_any_element()
-        };
-        titlebar = titlebar.child(div().flex_none().child(mark));
+        titlebar = titlebar.child(div().flex_none().child(icon(Icon::Prompt, 11., accent)));
         titlebar = match editing_title {
             Some(input) => titlebar.child(
                 div()
@@ -1470,7 +1325,7 @@ impl Workspace {
         if let Some(st) = status_text {
             titlebar = titlebar.child(div().flex_none().text_size(r(11.)).text_color(status_color).child(SharedString::from(st)));
         }
-        if !is_browser {
+        {
             let id = pane_id.clone();
             let set = tab.command.is_some();
             let color = if set || editing_command.is_some() { theme.accent } else { theme.text_faint };
@@ -1554,7 +1409,7 @@ impl Workspace {
                 }
                 let on = t.id == pane.active_tab_id;
                 let pending_tab = self.pending_close_tab.as_ref().map(|(p, tb)| *p == pane.id && *tb == t.id).unwrap_or(false);
-                let exited = matches!(&t.view, TabView::Terminal(v) if v.read(cx).status.exited);
+                let exited = t.view.read(cx).status.exited;
                 let (pid, tid) = (pane.id.clone(), t.id.clone());
                 let (pid2, tid2) = (pane.id.clone(), t.id.clone());
                 let group: SharedString = format!("tab-{}", t.id).into();
@@ -1612,43 +1467,25 @@ impl Workspace {
                         ),
                 );
             }
-            let (pid, kind) = (pane.id.clone(), pane.kind);
+            let pid = pane.id.clone();
             strip.child(
                 div().flex().items_center().ml(r(4.)).child(
                     glyph_button(SharedString::from(format!("tab-add-{}", pane.id)), Icon::Plus, 19., theme)
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.selected = vec![pid.clone()];
-                            this.add_pane(kind, window, cx);
+                            this.add_pane(window, cx);
                         })),
                 ),
             )
         });
 
         // ── The screen: only the tab in front is drawn ─────────────────────
-        let body: AnyElement = match &tab.view {
-            TabView::Terminal(v) => {
-                v.update(cx, |v, _| {
-                    v.zoom = zoom;
-                    v.visible = true;
-                });
-                v.clone().into_any_element()
-            }
-            TabView::Browser(b) => {
-                let showable = self.page_showable(pane);
-                b.update(cx, |b, _| {
-                    b.canvas_zoom = zoom;
-                    b.showable = showable;
-                });
-                b.clone().into_any_element()
-            }
-        };
-        // Pages behind the one in front are put away.
-        for t in pane.tabs.iter().filter(|t| t.id != tab.id) {
-            if let TabView::Browser(b) = &t.view {
-                b.update(cx, |b, _| b.hide());
-            }
-        }
+        tab.view.update(cx, |v, _| {
+            v.zoom = zoom;
+            v.visible = true;
+        });
+        let body = tab.view.clone().into_any_element();
         let _ = window;
 
         let content = div()
@@ -1729,30 +1566,6 @@ impl Workspace {
         pane_el.into_any_element()
     }
 
-    /// A native page can be shown only when nothing should be over it: the
-    /// workflow is in front, no question or menu stands over the canvas, no
-    /// pane above overlaps it, and it sits wholly inside the canvas.
-    fn page_showable(&self, pane: &Pane) -> bool {
-        if !self.active || self.covered || self.gesture.is_some() || self.pane_menu.is_some() || self.editor_choice.is_some() {
-            return false;
-        }
-        if self.pending_close.is_some() || self.pending_close_tab.is_some() {
-            return false;
-        }
-        let r = self.rect_of(pane);
-        let c = self.canvas_bounds;
-        let inside = r.origin.x >= c.origin.x
-            && r.origin.y >= c.origin.y
-            && r.origin.x + r.size.width <= c.origin.x + c.size.width
-            && r.origin.y + r.size.height <= c.origin.y + c.size.height;
-        let minimap = Bounds::new(self.minimap_origin(), size(px(MAP_W + 2.), px(MAP_H + 2.)));
-        let overlaps = |a: Bounds<Pixels>, b: Bounds<Pixels>| {
-            a.origin.x < b.origin.x + b.size.width && a.origin.x + a.size.width > b.origin.x && a.origin.y < b.origin.y + b.size.height && a.origin.y + a.size.height > b.origin.y
-        };
-        let covered = self.panes.iter().any(|o| o.id != pane.id && o.z > pane.z && overlaps(self.rect_of(o), r));
-        inside && !covered && !overlaps(r, minimap)
-    }
-
     fn render_dock(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = (self.selected.len() == 1).then(|| self.selected[0].clone());
         let names = self.pane_names(cx);
@@ -1760,7 +1573,7 @@ impl Workspace {
         if names.is_empty() {
             list = list.child(div().text_size(r(11.5)).text_color(theme.text_ghost).child("no open panes"));
         }
-        for (id, kind, name) in names {
+        for (id, name) in names {
             let on = focused.as_deref() == Some(id.as_str());
             let sel = self.selected.contains(&id);
             let group: SharedString = format!("dock-{id}").into();
@@ -1790,7 +1603,7 @@ impl Workspace {
                         .text_size(r(11.5))
                         .text_color(label_color)
                         .on_click(cx.listener(move |this, _, window, cx| this.reveal_pane(&rid, window, cx)))
-                        .child(icon(if kind.is_browser() { Icon::Page } else { Icon::Prompt }, if kind.is_browser() { 12. } else { 11. }, if on { theme.accent } else { theme.text_faint }))
+                        .child(icon(Icon::Prompt, 11., if on { theme.accent } else { theme.text_faint }))
                         .child(
                             div()
                                 .flex()
@@ -2330,7 +2143,7 @@ impl Render for Workspace {
         .inset_0();
 
         // While a gesture runs, its moves and its release are heard wherever
-        // the pointer goes — over a pane, a page, or out of the canvas.
+        // the pointer goes — over a pane or out of the canvas.
         // Registered every frame, not only while a gesture runs: a quick
         // click releases before the next frame is drawn, and a release that
         // finds no listener would leave the gesture stuck.
